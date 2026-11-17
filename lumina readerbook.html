@@ -1,0 +1,2393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lumina — Intelligent Audiobook & E-Reader</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: Inter, Merriweather, Noto Serif SC (Mandarin), Noto Sans SC -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,400&family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <!-- PDF.js for PDF parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    
+    <!-- JSZip for EPUB parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Noto Sans SC', 'sans-serif'],
+                        serif: ['Merriweather', 'Noto Serif SC', 'serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Custom subtle scrollbars */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(156, 163, 175, 0.4);
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(156, 163, 175, 0.7);
+        }
+
+        /* Sentence highlighting transitions */
+        .sentence-span {
+            transition: background-color 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
+            border-radius: 0.25rem;
+            padding: 0.1rem 0.15rem;
+            cursor: pointer;
+        }
+        .sentence-span:hover {
+            background-color: rgba(99, 102, 241, 0.12);
+        }
+        .sentence-active {
+            background-color: rgba(99, 102, 241, 0.22) !important;
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+            font-weight: 500;
+        }
+        .dark .sentence-active {
+            background-color: rgba(129, 140, 248, 0.28) !important;
+            box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.4);
+        }
+
+        /* Sepia theme custom overrides */
+        .theme-sepia {
+            background-color: #f4ecd8;
+            color: #433422;
+        }
+        .theme-sepia .sepia-surface {
+            background-color: #ede2c7;
+            border-color: #dcd0b3;
+        }
+        .theme-sepia .sentence-active {
+            background-color: rgba(180, 120, 40, 0.22) !important;
+            box-shadow: 0 0 0 2px rgba(180, 120, 40, 0.35);
+        }
+
+        /* Equalizer animation for playing indicator */
+        @keyframes eq {
+            0%, 100% { height: 4px; }
+            50% { height: 14px; }
+        }
+        .eq-bar:nth-child(1) { animation: eq 0.8s ease-in-out infinite; }
+        .eq-bar:nth-child(2) { animation: eq 0.6s ease-in-out infinite 0.2s; }
+        .eq-bar:nth-child(3) { animation: eq 0.9s ease-in-out infinite 0.4s; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors duration-300 h-screen flex flex-col overflow-hidden select-none">
+
+    <!-- Top Navigation Bar -->
+    <header class="h-14 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-3 sm:px-6 flex items-center justify-between shrink-0 z-20 sepia-surface">
+        <div class="flex items-center gap-2 sm:gap-3">
+            <!-- Sidebar Toggle -->
+            <button id="toggleSidebarBtn" class="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition" title="Toggle Chapters & Library">
+                <i class="ph ph-list text-xl"></i>
+            </button>
+            
+            <!-- Brand -->
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-sm shadow-indigo-500/30">
+                    <i class="ph-fill ph-headphones text-lg"></i>
+                </div>
+                <span class="font-bold text-base sm:text-lg tracking-tight">Lumina</span>
+                <span class="hidden md:inline-block text-xs px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-medium">EN / 中文</span>
+            </div>
+        </div>
+
+        <!-- Book Title Display -->
+        <div id="headerBookTitle" class="text-sm font-medium text-slate-600 dark:text-slate-300 truncate max-w-[140px] sm:max-w-xs md:max-w-md px-2">
+            No Book Loaded
+        </div>
+
+        <!-- Right Controls -->
+        <div class="flex items-center gap-1.5 sm:gap-2">
+            <!-- Import / Add Book Button -->
+            <button id="openImportModalBtn" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-medium shadow-sm transition">
+                <i class="ph ph-plus-circle text-base"></i>
+                <span class="hidden sm:inline">Import</span>
+            </button>
+
+            <!-- Bookmark Current Sentence -->
+            <button id="addBookmarkBtn" class="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition" title="Bookmark Current Position">
+                <i class="ph ph-bookmark-simple text-xl"></i>
+            </button>
+
+            <!-- Appearance / Reader Settings -->
+            <button id="toggleSettingsBtn" class="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition" title="Typography & Theme">
+                <i class="ph ph-text-aa text-xl"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Workspace -->
+    <div class="flex-1 flex overflow-hidden relative">
+        
+        <!-- Left Sidebar: Chapters & Bookmarks -->
+        <aside id="sidebar" class="w-72 sm:w-80 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col shrink-0 transition-all duration-300 absolute md:relative inset-y-0 left-0 z-30 -translate-x-full md:translate-x-0 shadow-xl md:shadow-none sepia-surface">
+            <!-- Sidebar Tabs -->
+            <div class="flex border-b border-slate-200 dark:border-slate-800 p-2 gap-1">
+                <button id="tabChapters" class="flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 transition">
+                    Chapters (<span id="chapterCount">0</span>)
+                </button>
+                <button id="tabBookmarks" class="flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+                    Bookmarks (<span id="bookmarkCount">0</span>)
+                </button>
+            </div>
+
+            <!-- Chapter List Container -->
+            <div id="chapterList" class="flex-1 overflow-y-auto p-2 space-y-1">
+                <!-- Populated dynamically -->
+            </div>
+
+            <!-- Bookmark List Container -->
+            <div id="bookmarkList" class="flex-1 overflow-y-auto p-2 space-y-2 hidden">
+                <!-- Populated dynamically -->
+            </div>
+
+            <!-- Sample Books Quick Loader -->
+            <div class="p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 space-y-1.5">
+                <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Quick Demo Samples</p>
+                <div class="grid grid-cols-2 gap-1.5">
+                    <button id="loadSampleEnBtn" class="text-xs py-1.5 px-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-indigo-500 text-left truncate transition bg-white dark:bg-slate-800">
+                        📖 English Story
+                    </button>
+                    <button id="loadSampleZhBtn" class="text-xs py-1.5 px-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-indigo-500 text-left truncate transition bg-white dark:bg-slate-800">
+                        🏮 中文经典 (Mandarin)
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Sidebar Backdrop for Mobile -->
+        <div id="sidebarBackdrop" class="fixed inset-0 bg-black/40 z-20 hidden md:hidden backdrop-blur-xs"></div>
+
+        <!-- Center Reader Canvas -->
+        <main id="readerScrollContainer" class="flex-1 overflow-y-auto px-4 sm:px-8 md:px-16 lg:px-24 py-8 sm:py-12 scroll-smooth select-text">
+            <div id="readerContent" class="max-w-3xl mx-auto pb-32">
+                <!-- Empty State / Welcome Dropzone -->
+                <div id="emptyState" class="flex flex-col items-center justify-center text-center py-12 sm:py-20 px-4">
+                    <div class="w-16 h-16 rounded-2xl bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mb-5 shadow-inner">
+                        <i class="ph ph-book-open-text text-3xl"></i>
+                    </div>
+                    <h1 class="text-2xl sm:text-3xl font-bold mb-2">Your Personal AI & Neural Narrator</h1>
+                    <p class="text-slate-500 dark:text-slate-400 max-w-md text-sm sm:text-base mb-8">
+                        Upload a <strong>PDF</strong>, <strong>EPUB</strong>, <strong>TXT</strong> file, or paste any text in <strong>English</strong> or <strong>Mandarin (普通话)</strong>. Automatically split into chapters with synchronized sentence highlighting.
+                    </p>
+                    
+                    <div class="flex flex-wrap items-center justify-center gap-3">
+                        <button id="emptyImportBtn" class="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm shadow-md shadow-indigo-500/20 flex items-center gap-2 transition">
+                            <i class="ph ph-upload-simple text-lg"></i>
+                            Upload Book or Paste Text
+                        </button>
+                        <button id="emptySampleZhBtn" class="px-5 py-3 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium text-sm flex items-center gap-2 transition">
+                            <span>🏮 Try Mandarin Sample</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Active Chapter Text Container -->
+                <article id="chapterArticle" class="hidden">
+                    <div class="mb-8 pb-4 border-b border-slate-200 dark:border-slate-800">
+                        <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 mb-1">
+                            <span id="chapterBadge">Chapter 1</span>
+                            <span>•</span>
+                            <span id="chapterLangBadge">Auto-Detected</span>
+                        </div>
+                        <h2 id="chapterTitleDisplay" class="text-2xl sm:text-3xl font-bold leading-tight"></h2>
+                    </div>
+
+                    <!-- Paragraphs & Interactive Sentences -->
+                    <div id="sentencesContainer" class="font-serif text-lg sm:text-xl leading-relaxed space-y-5">
+                        <!-- Rendered dynamically -->
+                    </div>
+
+                    <!-- Next / Prev Chapter Footer Navigation -->
+                    <div class="mt-14 pt-6 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4">
+                        <button id="footerPrevChapBtn" class="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium flex items-center gap-2 transition disabled:opacity-40">
+                            <i class="ph ph-arrow-left"></i>
+                            <span>Previous Chapter</span>
+                        </button>
+                        <button id="footerNextChapBtn" class="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium flex items-center gap-2 transition disabled:opacity-40">
+                            <span>Next Chapter</span>
+                            <i class="ph ph-arrow-right"></i>
+                        </button>
+                    </div>
+                </article>
+            </div>
+        </main>
+
+        <!-- Popover: Typography & Appearance Settings -->
+        <div id="settingsPopover" class="hidden absolute top-2 right-4 w-72 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-4 z-40 space-y-3.5 max-h-[85vh] overflow-y-auto">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Reader Appearance</span>
+                <button id="closeSettingsBtn" class="text-slate-400 hover:text-slate-600"><i class="ph ph-x"></i></button>
+            </div>
+
+            <!-- Theme Selector -->
+            <div>
+                <label class="text-xs font-medium text-slate-500 block mb-1.5">Color Theme</label>
+                <div class="grid grid-cols-3 gap-2">
+                    <button data-theme="light" class="theme-btn py-2 px-2 rounded-xl border border-slate-200 bg-white text-slate-900 text-xs font-medium flex items-center justify-center gap-1 shadow-xs">
+                        <i class="ph ph-sun"></i> Light
+                    </button>
+                    <button data-theme="sepia" class="theme-btn py-2 px-2 rounded-xl border border-amber-200 bg-[#f4ecd8] text-[#433422] text-xs font-medium flex items-center justify-center gap-1 shadow-xs">
+                        <i class="ph ph-coffee"></i> Sepia
+                    </button>
+                    <button data-theme="dark" class="theme-btn py-2 px-2 rounded-xl border border-slate-700 bg-slate-900 text-slate-100 text-xs font-medium flex items-center justify-center gap-1 shadow-xs">
+                        <i class="ph ph-moon"></i> Dark
+                    </button>
+                </div>
+            </div>
+
+            <!-- Font Family -->
+            <div>
+                <label class="text-xs font-medium text-slate-500 block mb-1.5">Typography</label>
+                <div class="grid grid-cols-2 gap-2">
+                    <button data-font="serif" class="font-btn py-1.5 px-3 rounded-xl border border-indigo-500 bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 text-xs font-serif font-medium">
+                        Book Serif
+                    </button>
+                    <button data-font="sans" class="font-btn py-1.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-sans font-medium">
+                        Clean Sans
+                    </button>
+                </div>
+            </div>
+
+            <!-- Font Size -->
+            <div>
+                <div class="flex justify-between text-xs font-medium text-slate-500 mb-1">
+                    <span>Font Size</span>
+                    <span id="fontSizeLabel">20px</span>
+                </div>
+                <input id="fontSizeSlider" type="range" min="15" max="30" value="20" class="w-full accent-indigo-600 cursor-pointer">
+            </div>
+
+            <!-- Auto-scroll toggle -->
+            <div class="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800">
+                <span class="text-xs font-medium">Auto-scroll while reading</span>
+                <input id="autoScrollCheckbox" type="checkbox" checked class="w-4 h-4 accent-indigo-600 rounded cursor-pointer">
+            </div>
+
+            <!-- Smart Pinyin & Chinese Name Pronunciation -->
+            <div class="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-medium" title="Automatically pronounces Chinese/Pinyin names like Wei Wuxian, Lan Wangji, Xiao, Qing, etc.">Pinyin Name Pronunciation</span>
+                    <input id="pinyinPronounceCheckbox" type="checkbox" checked class="w-4 h-4 accent-indigo-600 rounded cursor-pointer">
+                </div>
+                <div>
+                    <label for="customGlossaryInput" class="text-[11px] font-medium text-slate-500 block mb-1">Custom Name Glossary (Name = Sound)</label>
+                    <textarea id="customGlossaryInput" rows="2" placeholder="Wuxian = Wèi Wúxiàn&#10;Wangji = Wàngjī" class="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] leading-snug focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                </div>
+            </div>
+
+            <!-- Optional Gemini API Key for External/Phone Hosting -->
+            <div class="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
+                <div class="flex items-center justify-between">
+                    <label for="geminiApiKeyInput" class="text-xs font-medium text-slate-500">Gemini API Key (For Web/Phone)</label>
+                    <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" class="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-medium">Get free key ↗</a>
+                </div>
+                <input id="geminiApiKeyInput" type="password" placeholder="AIzaSy..." class="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <p class="text-[10px] text-slate-400 leading-tight">Stored only in your current browser session—never uploaded to GitHub.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Audiobook Player Dock -->
+    <footer class="border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-3 sm:px-6 py-2.5 sm:py-3 shrink-0 z-30 shadow-[0_-4px_20px_rgba(0,0,0,0.04)] sepia-surface">
+        <div class="max-w-6xl mx-auto flex flex-col gap-2.5">
+            
+            <!-- Progress Scrubber Bar -->
+            <div class="flex items-center gap-3">
+                <span id="progressSentenceLabel" class="text-[11px] font-mono text-slate-500 w-16 text-right shrink-0">0 / 0</span>
+                <div class="relative flex-1 flex items-center">
+                    <input id="progressSlider" type="range" min="0" max="100" value="0" class="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-600">
+                </div>
+                <span id="progressPercentLabel" class="text-[11px] font-mono text-slate-500 w-10 shrink-0">0%</span>
+            </div>
+
+            <!-- Main Audio Controls Grid (Prevents overlapping across all screen sizes) -->
+            <div class="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] items-center gap-2.5 lg:gap-4">
+                
+                <!-- Top/Left: Engine & Voice Selection -->
+                <div class="flex items-center gap-2 w-full min-w-0">
+                    <!-- Engine Mode Selector -->
+                    <select id="voiceEngineSelect" class="text-xs font-medium bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-1.5 shrink-0 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer" title="Choose Voice Engine">
+                        <option value="browser">⚡ System Voice</option>
+                        <option value="gemini">✨ Gemini AI Voice</option>
+                    </select>
+
+                    <!-- Specific Voice Dropdown -->
+                    <select id="voiceSelect" class="text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-1.5 truncate flex-1 min-w-0 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer" title="Select Narrator Voice">
+                        <option value="">Loading voices...</option>
+                    </select>
+
+                    <!-- Smart Character Voice Cast Toggle -->
+                    <button id="characterCastToggleBtn" class="px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-indigo-500 text-xs font-medium flex items-center gap-1.5 shrink-0 transition" title="Toggle Multi-Character Voice Acting">
+                        <i class="ph-fill ph-users-three text-sm"></i>
+                        <span class="hidden sm:inline">Cast: Off</span>
+                    </button>
+                </div>
+
+                <!-- Bottom/Center: Playback Transport Controls + Mobile Speed/Timer -->
+                <div class="flex items-center justify-between lg:justify-center gap-2 sm:gap-3 w-full lg:w-auto">
+                    <!-- Spacer on mobile to keep Play button centered -->
+                    <div class="flex items-center gap-1 lg:hidden">
+                        <button id="mobileSpeedMirrorBtn" class="px-2 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold font-mono transition" title="Playback Speed">
+                            1.0x
+                        </button>
+                    </div>
+
+                    <div class="flex items-center justify-center gap-1.5 sm:gap-3">
+                        <!-- Prev Chapter -->
+                        <button id="prevChapBtn" class="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition" title="Previous Chapter">
+                            <i class="ph-fill ph-skip-back text-lg"></i>
+                        </button>
+
+                        <!-- Prev Sentence -->
+                        <button id="prevSentenceBtn" class="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition" title="Previous Sentence">
+                            <i class="ph-fill ph-rewind text-lg"></i>
+                        </button>
+
+                        <!-- Main Play / Pause Button -->
+                        <button id="playPauseBtn" class="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30 shrink-0 transition">
+                            <i id="playPauseIcon" class="ph-fill ph-play text-xl ml-0.5"></i>
+                        </button>
+
+                        <!-- Next Sentence -->
+                        <button id="nextSentenceBtn" class="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition" title="Next Sentence">
+                            <i class="ph-fill ph-fast-forward text-lg"></i>
+                        </button>
+
+                        <!-- Next Chapter -->
+                        <button id="nextChapBtn" class="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition" title="Next Chapter">
+                            <i class="ph-fill ph-skip-forward text-lg"></i>
+                        </button>
+                    </div>
+
+                    <!-- Mobile Sleep Timer Trigger -->
+                    <div class="flex items-center lg:hidden">
+                        <button id="mobileSleepMirrorBtn" class="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-medium flex items-center gap-1 transition" title="Sleep Timer">
+                            <i class="ph ph-timer text-sm"></i>
+                            <span id="mobileSleepTimerLabel" class="text-[11px]">Off</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Right (Desktop): Speed & Sleep Timer -->
+                <div class="hidden lg:flex items-center justify-end gap-2">
+                    <!-- Playback Speed -->
+                    <button id="speedBtn" class="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold font-mono transition" title="Playback Speed">
+                        1.0x
+                    </button>
+
+                    <!-- Sleep Timer -->
+                    <button id="sleepTimerBtn" class="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-medium flex items-center gap-1 transition" title="Sleep Timer">
+                        <i class="ph ph-timer text-sm"></i>
+                        <span id="sleepTimerLabel">Off</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Modal: Import File or Paste Text -->
+    <div id="importModal" class="fixed inset-0 bg-black/50 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <!-- Modal Header -->
+            <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                <h3 class="font-bold text-lg flex items-center gap-2">
+                    <i class="ph-fill ph-books text-indigo-600"></i>
+                    Import Book or Text
+                </h3>
+                <button id="closeImportModalBtn" class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500">
+                    <i class="ph ph-x text-lg"></i>
+                </button>
+            </div>
+
+            <!-- Modal Body -->
+            <div class="p-5 overflow-y-auto space-y-5">
+                <!-- Drag & Drop File Upload Zone -->
+                <div id="dropZone" class="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-indigo-500 dark:hover:border-indigo-500 rounded-2xl p-6 text-center cursor-pointer transition bg-slate-50/50 dark:bg-slate-800/30">
+                    <input id="fileInput" type="file" accept=".txt,.pdf,.epub" class="hidden">
+                    <div class="w-12 h-12 rounded-xl bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto mb-3">
+                        <i class="ph ph-file-arrow-up text-2xl"></i>
+                    </div>
+                    <p class="font-semibold text-sm mb-1">Click to upload or drag & drop</p>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">Supports <strong>.EPUB</strong>, <strong>.PDF</strong>, and <strong>.TXT</strong> (UTF-8 / Mandarin supported)</p>
+                </div>
+
+                <!-- Divider -->
+                <div class="relative flex items-center py-1">
+                    <div class="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
+                    <span class="shrink mx-3 text-xs font-semibold uppercase text-slate-400">Or Paste Text Directly</span>
+                    <div class="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
+                </div>
+
+                <!-- Direct Text Paste Form -->
+                <div class="space-y-3">
+                    <div>
+                        <label class="text-xs font-medium text-slate-500 block mb-1">Book / Article Title (Optional)</label>
+                        <input id="pasteTitleInput" type="text" placeholder="e.g., My Reading Notes or 三体节选" class="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="text-xs font-medium text-slate-500 block mb-1">Content (Auto-detects English & Mandarin chapters)</label>
+                        <textarea id="pasteContentInput" rows="5" placeholder="Paste English or Mandarin text here... Chapters like 'Chapter 1' or '第一章' will be automatically split." class="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                    </div>
+                    <button id="processPastedTextBtn" class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm shadow-sm transition">
+                        Load Pasted Text into Reader
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 hidden flex flex-col items-center justify-center text-white p-4">
+        <div class="w-12 h-12 border-4 border-indigo-400 border-t-transparent rounded-full animate-spin mb-4"></div>
+        <p id="loadingMessage" class="font-medium text-base">Parsing document and organizing chapters...</p>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none"></div>
+
+    <script>
+        /**
+         * Lumina Audiobook & E-Reader Application
+         * Supports TXT, PDF, EPUB, and raw text input.
+         * Auto-splits chapters for both English ("Chapter 1") and Mandarin ("第一章").
+         * Provides Natural Web Speech Synthesis (with fluent Mandarin cmn-Hans-CN / zh-CN selection)
+         * AND optional Gemini AI Studio TTS voice synthesis.
+         * Includes Smart Pinyin & Chinese Name Pronunciation for translated C-novels (MDZS, Xianxia, Wuxia).
+         */
+
+        // Configure PDF.js worker
+        if (window.pdfjsLib) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+
+        // Application State
+        const state = {
+            bookTitle: '',
+            chapters: [], // Array of { title: string, sentences: string[], lang: 'zh' | 'en' }
+            currentChapterIndex: 0,
+            currentSentenceIndex: 0,
+            isPlaying: false,
+            playbackRate: 1.0,
+            voiceEngine: 'browser', // 'browser' | 'gemini'
+            selectedBrowserVoiceURI: '',
+            selectedGeminiVoice: 'Kore',
+            customGeminiApiKey: '',
+            pinyinPronounceEnabled: true,
+            customGlossaryRaw: '',
+            availableVoices: [],
+            characterMode: false,
+            characterCast: {}, // Maps speaker name -> { role, gender, geminiVoice, browserVoiceURI, color }
+            bookmarks: [], // Array of { id, chapterIndex, sentenceIndex, text, chapterTitle, timestamp }
+            autoScroll: true,
+            sleepTimerMinutes: 0,
+            sleepTimerTimeout: null,
+            currentAudioElement: null, // For Gemini TTS playback
+            ttsRequestAbortController: null,
+            geminiAudioCache: new Map(), // Caches generated WAV blob URLs by paragraph/segment key
+            geminiInFlightRequests: new Map(), // Deduplicates concurrent pre-fetch requests
+            activeGeminiSegment: null // Tracks current paragraph range { chapterIdx, startIdx, endIdx }
+        };
+
+        // ==========================================
+        // PINYIN & CHINESE NAME PRONUNCIATION ENGINE
+        // ==========================================
+
+        // Curated dictionary for popular Xianxia, Wuxia, Danmei (MDZS, TGCF, SVSSS, 2HA) & common Chinese terms
+        const PINYIN_NAME_LEXICON = {
+            // MDZS (Mo Dao Zu Shi / Grandmaster of Demonic Cultivation)
+            'wei wuxian': { browser: 'Way Woo-shyen', gemini: 'Wèi Wúxiàn' },
+            'wuxian': { browser: 'Woo-shyen', gemini: 'Wúxiàn' },
+            'wei ying': { browser: 'Way Ying', gemini: 'Wèi Yīng' },
+            'lan wangji': { browser: 'Lahn Wahng-jee', gemini: 'Lán Wàngjī' },
+            'wangji': { browser: 'Wahng-jee', gemini: 'Wàngjī' },
+            'lan zhan': { browser: 'Lahn Jahn', gemini: 'Lán Zhàn' },
+            'hanguang-jun': { browser: 'Hahn-gwahng Jyoon', gemini: 'Hánguāng-jūn' },
+            'hanguang jun': { browser: 'Hahn-gwahng Jyoon', gemini: 'Hánguāng-jūn' },
+            'jiang cheng': { browser: 'Jyahng Chung', gemini: 'Jiāng Chéng' },
+            'jiang wanyin': { browser: 'Jyahng Wahn-yin', gemini: 'Jiāng Wǎnyín' },
+            'jiang yanli': { browser: 'Jyahng Yen-lee', gemini: 'Jiāng Yànlí' },
+            'yanli': { browser: 'Yen-lee', gemini: 'Yànlí' },
+            'lan xichen': { browser: 'Lahn Shee-chun', gemini: 'Lán Xīchén' },
+            'xichen': { browser: 'Shee-chun', gemini: 'Xīchén' },
+            'zewu-jun': { browser: 'Zuh-woo Jyoon', gemini: 'Zéwú-jūn' },
+            'jin guangyao': { browser: 'Jin Gwahng-yow', gemini: 'Jīn Guāngyáo' },
+            'guangyao': { browser: 'Gwahng-yow', gemini: 'Guāngyáo' },
+            'jin zixuan': { browser: 'Jin Dzuh-shwen', gemini: 'Jīn Zixuān' },
+            'zixuan': { browser: 'Dzuh-shwen', gemini: 'Zixuān' },
+            'jin ling': { browser: 'Jin Ling', gemini: 'Jīn Líng' },
+            'wen ning': { browser: 'Wun Ning', gemini: 'Wēn Níng' },
+            'wen qing': { browser: 'Wun Ching', gemini: 'Wēn Qíng' },
+            'wen ruohan': { browser: 'Wun Rwo-hahn', gemini: 'Wēn Ruòhán' },
+            'nie mingjue': { browser: 'Nyeh Ming-jweh', gemini: 'Niè Míngjué' },
+            'mingjue': { browser: 'Ming-jweh', gemini: 'Míngjué' },
+            'nie huaisang': { browser: 'Nyeh Hwhy-sahng', gemini: 'Niè Huáisāng' },
+            'huaisang': { browser: 'Hwhy-sahng', gemini: 'Huáisāng' },
+            'xue yang': { browser: 'Shweh Yahng', gemini: 'Xuē Yáng' },
+            'xiao xingchen': { browser: 'Shyow Shing-chun', gemini: 'Xiǎo Xīngchén' },
+            'xingchen': { browser: 'Shing-chun', gemini: 'Xīngchén' },
+            'song lan': { browser: 'Sohng Lahn', gemini: 'Sòng Lán' },
+            'lan sizhui': { browser: 'Lahn Suh-jway', gemini: 'Lán Sīzhuī' },
+            'sizhui': { browser: 'Suh-jway', gemini: 'Sīzhuī' },
+            'lan jingyi': { browser: 'Lahn Jing-yee', gemini: 'Lán Jǐngyí' },
+            'jingyi': { browser: 'Jing-yee', gemini: 'Jǐngyí' },
+            'lan qiren': { browser: 'Lahn Chee-run', gemini: 'Lán Qǐrén' },
+            'qiren': { browser: 'Chee-run', gemini: 'Qǐrén' },
+            'yiling': { browser: 'Yee-ling', gemini: 'Yílíng' },
+            'gusu': { browser: 'Goo-soo', gemini: 'Gūsū' },
+            'yunmeng': { browser: 'Yoon-mung', gemini: 'Yúnmèng' },
+            'qishan': { browser: 'Chee-shahn', gemini: 'Qíshān' },
+            'qinghe': { browser: 'Ching-huh', gemini: 'Qīnghé' },
+            'lanling': { browser: 'Lahn-ling', gemini: 'Lánlíng' },
+            'bichen': { browser: 'Bee-chun', gemini: 'Bìchén' },
+            'suibian': { browser: 'Sway-byen', gemini: 'Suíbiàn' },
+            'chenqing': { browser: 'Chun-ching', gemini: 'Chénqíng' },
+
+            // TGCF / SVSSS / 2HA & Xianxia staples
+            'xie lian': { browser: 'Shyeh Lyen', gemini: 'Xiè Lián' },
+            'hua cheng': { browser: 'Hwah Chung', gemini: 'Huā Chéng' },
+            'san lang': { browser: 'Sahn Lahng', gemini: 'Sān Láng' },
+            'feng xin': { browser: 'Fung Shin', gemini: 'Fēng Xìn' },
+            'mu qing': { browser: 'Moo Ching', gemini: 'Mù Qíng' },
+            'shi qingxuan': { browser: 'Shih Ching-shwen', gemini: 'Shī Qīngxuán' },
+            'shen qingqiu': { browser: 'Shun Ching-chyoh', gemini: 'Shěn Qīngqiū' },
+            'qingqiu': { browser: 'Ching-chyoh', gemini: 'Qīngqiū' },
+            'luo binghe': { browser: 'Lwo Bing-huh', gemini: 'Luò Bīnghé' },
+            'binghe': { browser: 'Bing-huh', gemini: 'Bīnghé' },
+            'chu wanning': { browser: 'Choo Wahn-ning', gemini: 'Chǔ Wǎnníng' },
+            'mo ran': { browser: 'Mwo Rahn', gemini: 'Mò Rán' },
+
+            // Cultivation / Honorifics / Wuxia Terms
+            'shizun': { browser: 'Shih-dzoon', gemini: 'Shīzūn' },
+            'shixiong': { browser: 'Shih-shyohng', gemini: 'Shīxiōng' },
+            'shidi': { browser: 'Shih-dee', gemini: 'Shīdì' },
+            'shijie': { browser: 'Shih-jyeh', gemini: 'Shījiě' },
+            'shimei': { browser: 'Shih-may', gemini: 'Shīmèi' },
+            'shishu': { browser: 'Shih-shoo', gemini: 'Shīshū' },
+            'shibo': { browser: 'Shih-bwo', gemini: 'Shībó' },
+            'dantian': { browser: 'Dahn-tyen', gemini: 'Dāntián' },
+            'qi': { browser: 'Chee', gemini: 'Qì' },
+            'jindan': { browser: 'Jin-dahn', gemini: 'Jīndān' },
+            'yuanying': { browser: 'Ywen-ying', gemini: 'Yuányīng' },
+            'jianghu': { browser: 'Jyahng-hoo', gemini: 'Jiānghú' },
+            'wuxia': { browser: 'Woo-shyah', gemini: 'Wǔxiá' },
+            'xianxia': { browser: 'Shyen-shyah', gemini: 'Xiānxiá' },
+            'gongzi': { browser: 'Gohng-dzuh', gemini: 'Gōngzǐ' },
+            'qianbei': { browser: 'Chyen-bay', gemini: 'Qiánbèi' },
+            'wanbei': { browser: 'Wahn-bay', gemini: 'Wǎnbèi' },
+            'zongzhu': { browser: 'Dzohng-joo', gemini: 'Zōngzhǔ' }
+        };
+
+        // Phonetic mapping for standard Pinyin syllables (for unknown compound/single Chinese names)
+        const PINYIN_SYLLABLES = {
+            // x- initials (pronounced like soft 'sh' / 'shy')
+            'xia': 'shyah', 'xian': 'shyen', 'xiang': 'shyahng', 'xiao': 'shyow',
+            'xie': 'shyeh', 'xin': 'shin', 'xing': 'shing', 'xiong': 'shyohng',
+            'xiu': 'shyoh', 'xi': 'shee', 'xu': 'shoo', 'xuan': 'shwen',
+            'xue': 'shweh', 'xun': 'shyoon',
+            // q- initials (pronounced like crisp 'ch' / 'chy')
+            'qia': 'chyah', 'qian': 'chyen', 'qiang': 'chyahng', 'qiao': 'chyow',
+            'qie': 'chyeh', 'qin': 'chin', 'qing': 'ching', 'qiong': 'chyohng',
+            'qiu': 'chyoh', 'qi': 'chee', 'qu': 'choo', 'quan': 'chwen',
+            'que': 'chweh', 'qun': 'chyoon',
+            // zh- initials (pronounced like 'j')
+            'zha': 'jah', 'zhai': 'jye', 'zhan': 'jahn', 'zhang': 'jahng',
+            'zhao': 'jow', 'zhe': 'juh', 'zhei': 'jay', 'zhen': 'jun',
+            'zheng': 'jung', 'zhi': 'jih', 'zhong': 'johng', 'zhou': 'joh',
+            'zhu': 'joo', 'zhua': 'jwah', 'zhuai': 'jwhy', 'zhuan': 'jwahn',
+            'zhuang': 'jwahng', 'zhui': 'jway', 'zhun': 'jwun', 'zhuo': 'jwo',
+            // z- initials (pronounced like 'dz')
+            'za': 'dzah', 'zai': 'dzye', 'zan': 'dzahn', 'zang': 'dzahng',
+            'zao': 'dzow', 'ze': 'dzuh', 'zei': 'dzay', 'zen': 'dzun',
+            'zeng': 'dzung', 'zi': 'dzuh', 'zong': 'dzohng', 'zou': 'dzoh',
+            'zu': 'dzoo', 'zuan': 'dzwahn', 'zui': 'dzway', 'zun': 'dzwun', 'zuo': 'dzwo',
+            // c- initials (pronounced like 'ts')
+            'ca': 'tsah', 'cai': 'tsye', 'can': 'tsahn', 'cang': 'tsahng',
+            'cao': 'tsow', 'ce': 'tsuh', 'cen': 'tsun', 'ceng': 'tsung',
+            'ci': 'tsuh', 'cong': 'tsohng', 'cou': 'tsoh', 'cu': 'tsoo',
+            'cuan': 'tswahn', 'cui': 'tsway', 'cun': 'tswun', 'cuo': 'tswo',
+            // Common finals & syllables
+            'wu': 'woo', 'wang': 'wahng', 'wei': 'way', 'wen': 'wun',
+            'yu': 'yoo', 'yuan': 'ywen', 'yue': 'yweh', 'yun': 'yoon',
+            'yan': 'yen', 'yang': 'yahng', 'yao': 'yow', 'ye': 'yeh',
+            'ying': 'ying', 'yong': 'yohng', 'you': 'yoh',
+            'jia': 'jyah', 'jian': 'jyen', 'jiang': 'jyahng', 'jiao': 'jyow',
+            'jie': 'jyeh', 'jin': 'jin', 'jing': 'jing', 'jiong': 'jyohng',
+            'jiu': 'jyoh', 'ji': 'jee', 'ju': 'joo', 'juan': 'jwen',
+            'jue': 'jweh', 'jun': 'jyoon',
+            'hua': 'hwah', 'huai': 'hwhy', 'huan': 'hwahn', 'huang': 'hwahng',
+            'hui': 'hway', 'hun': 'hwun', 'huo': 'hwo', 'han': 'hahn', 'hang': 'hahng', 'hao': 'how', 'he': 'huh',
+            'cheng': 'chung', 'chen': 'chun', 'chang': 'chahng', 'chao': 'chow', 'chu': 'choo', 'chuan': 'chwahn',
+            'shen': 'shun', 'sheng': 'shung', 'shang': 'shahng', 'shao': 'show', 'shi': 'shih', 'shu': 'shoo', 'shuang': 'shwahng', 'shui': 'shway',
+            'lian': 'lyen', 'liang': 'lyahng', 'liao': 'lyow', 'lie': 'lyeh', 'ling': 'ling', 'liu': 'lyoh', 'luo': 'lwo', 'lan': 'lahn', 'lang': 'lahng',
+            'mian': 'myen', 'miao': 'myow', 'mie': 'myeh', 'ming': 'ming', 'mo': 'mwo',
+            'nian': 'nyen', 'niang': 'nyahng', 'niao': 'nyow', 'nie': 'nyeh', 'ning': 'ning', 'niu': 'nyoh',
+            'tian': 'tyen', 'tiao': 'tyow', 'tie': 'tyeh', 'ting': 'ting', 'tang': 'tahng', 'tao': 'tow',
+            'dian': 'dyen', 'diao': 'dyow', 'die': 'dyeh', 'ding': 'ding', 'dong': 'dohng', 'duan': 'dwahn',
+            'bian': 'byen', 'biao': 'byow', 'bie': 'byeh', 'bing': 'bing',
+            'pian': 'pyen', 'piao': 'pyow', 'pie': 'pyeh', 'ping': 'ping',
+            'feng': 'fung', 'fang': 'fahng', 'fei': 'fay',
+            'guang': 'gwahng', 'guan': 'gwahn', 'gui': 'gway', 'guo': 'gwo', 'gao': 'gow', 'ge': 'guh',
+            'kuang': 'kwahng', 'kuan': 'kwahn', 'kui': 'kway', 'kuo': 'kwo', 'kang': 'kahng',
+            'ruo': 'rwo', 'ran': 'rahn', 'rang': 'rahng', 'ren': 'run', 'rong': 'rohng', 'ru': 'roo',
+            'sang': 'sahng', 'song': 'sohng', 'su': 'soo', 'suo': 'swo', 'sui': 'sway', 'sun': 'swun'
+        };
+
+        // Common English words that look like Pinyin syllables so we NEVER alter real English words
+        const ENGLISH_SAFE_WORDS = new Set([
+            'an', 'as', 'at', 'be', 'by', 'can', 'dan', 'die', 'fan', 'fen', 'for', 'fun',
+            'gang', 'get', 'gun', 'had', 'han', 'hang', 'has', 'hat', 'he', 'hen', 'her', 'him',
+            'his', 'how', 'hut', 'in', 'is', 'it', 'jin', 'ken', 'kin', 'laid', 'lan', 'lie',
+            'lin', 'ling', 'long', 'man', 'men', 'min', 'nan', 'no', 'not', 'nun', 'on', 'or',
+            'pan', 'pen', 'pin', 'ran', 'run', 'sang', 'she', 'sin', 'song', 'sun', 'tan', 'ten',
+            'the', 'tie', 'tin', 'to', 'tun', 'wan', 'we', 'wen', 'win', 'won', 'yet', 'you'
+        ]);
+
+        const SORTED_PINYIN_KEYS = Object.keys(PINYIN_SYLLABLES).sort((a, b) => b.length - a.length);
+
+        // Segment a single capitalized Pinyin given name (e.g., "Wuxian" -> "Woo-shyen", "Zixuan" -> "Dzuh-shwen")
+        function segmentAndConvertPinyinWord(word) {
+            const lower = word.toLowerCase();
+            if (lower.length < 2 || lower.length > 12) return null;
+            if (ENGLISH_SAFE_WORDS.has(lower)) return null;
+
+            // 1. Check exact single-syllable match (e.g., "Xiao", "Qing", "Xue", "Zhan", "Hua")
+            if (PINYIN_SYLLABLES[lower]) {
+                const syl = PINYIN_SYLLABLES[lower];
+                return syl.charAt(0).toUpperCase() + syl.slice(1);
+            }
+
+            // 2. Try splitting into 2 valid Pinyin syllables (e.g., wu+xian, zi+xuan, ming+jue, huai+sang)
+            for (let i = 2; i <= lower.length - 2; i++) {
+                const part1 = lower.slice(0, i);
+                const part2 = lower.slice(i);
+                // Avoid splitting across 'ng' + vowel wrongly unless part1 ends with ng and part2 starts with consonant
+                if (part1.endsWith('n') && part2.startsWith('g')) continue;
+
+                const phon1 = PINYIN_SYLLABLES[part1] || (['wu', 'yu', 'yi', 'ya', 'wa', 'wo', 'ai', 'an', 'ao', 'en', 'er', 'ou', 'li', 'lu', 'lv', 'ma', 'me', 'mi', 'mu', 'na', 'ne', 'ni', 'nu', 'ba', 'bo', 'bu', 'pa', 'po', 'pu', 'da', 'de', 'di', 'du', 'ta', 'te', 'ti', 'tu', 'ga', 'gu', 'ka', 'ke', 'ku', 'ha', 'hu', 'fa', 'fo', 'fu', 'sa', 'se', 'si', 'za', 'ze', 'zi', 'ca', 'ce', 'ci', 'la', 'le'].includes(part1) ? part1 : null);
+                const phon2 = PINYIN_SYLLABLES[part2] || (['wu', 'yu', 'yi', 'ya', 'wa', 'wo', 'ai', 'an', 'ao', 'en', 'er', 'ou', 'li', 'lu', 'lv', 'ma', 'me', 'mi', 'mu', 'na', 'ne', 'ni', 'nu', 'ba', 'bo', 'bu', 'pa', 'po', 'pu', 'da', 'de', 'di', 'du', 'ta', 'te', 'ti', 'tu', 'ga', 'gu', 'ka', 'ke', 'ku', 'ha', 'hu', 'fa', 'fo', 'fu', 'sa', 'se', 'si', 'za', 'ze', 'zi', 'ca', 'ce', 'ci', 'la', 'le'].includes(part2) ? part2 : null);
+
+                // Require at least one distinctly Chinese phonetic syllable (x/q/zh/z/c/etc.) so English words aren't touched
+                if (phon1 && phon2 && (PINYIN_SYLLABLES[part1] || PINYIN_SYLLABLES[part2])) {
+                    const cap1 = phon1.charAt(0).toUpperCase() + phon1.slice(1);
+                    return `${cap1}-${phon2}`;
+                }
+            }
+
+            return null;
+        }
+
+        // Parse user-defined custom glossary lines (e.g. "Wuxian = Wèi Wúxiàn")
+        function parseCustomGlossary() {
+            const map = [];
+            if (!state.customGlossaryRaw) return map;
+            const lines = state.customGlossaryRaw.split(/\r?\n/);
+            for (const line of lines) {
+                const idx = line.indexOf('=');
+                if (idx > 0) {
+                    const key = line.slice(0, idx).trim();
+                    const val = line.slice(idx + 1).trim();
+                    if (key && val) {
+                        map.push({ key, val });
+                    }
+                }
+            }
+            // Longer phrases first
+            return map.sort((a, b) => b.key.length - a.key.length);
+        }
+
+        // Transform English text for natural Mandarin name pronunciation before sending to TTS
+        function applyPinyinPronunciation(text, lang, engine = 'browser') {
+            if (!state.pinyinPronounceEnabled || lang === 'zh') return text;
+
+            let processed = text;
+
+            // 1. Apply User's Custom Glossary Overrides first
+            const customEntries = parseCustomGlossary();
+            for (const entry of customEntries) {
+                const escaped = entry.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+                processed = processed.replace(regex, entry.val);
+            }
+
+            // 2. Apply Built-in Xianxia / Wuxia / MDZS Lexicon (longest keys first so "Wei Wuxian" matches before "Wuxian")
+            const lexiconKeys = Object.keys(PINYIN_NAME_LEXICON).sort((a, b) => b.length - a.length);
+            for (const key of lexiconKeys) {
+                const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+                const replacement = engine === 'gemini'
+                    ? PINYIN_NAME_LEXICON[key].gemini
+                    : PINYIN_NAME_LEXICON[key].browser;
+                processed = processed.replace(regex, replacement);
+            }
+
+            // 3. For System Voice, auto-convert remaining capitalized Pinyin names (e.g. "Xiao", "Qing", "Zixuan", "Xue")
+            if (engine === 'browser') {
+                processed = processed.replace(/\b([A-Z][a-z]{1,11})(?:'s)?\b/g, (fullMatch, word, offset) => {
+                    // Check if there was a possessive 's
+                    const hasPossessive = fullMatch.endsWith("'s");
+                    // Avoid converting common sentence-starting English words if at index 0
+                    if (offset === 0 && ENGLISH_SAFE_WORDS.has(word.toLowerCase())) {
+                        return fullMatch;
+                    }
+                    const converted = segmentAndConvertPinyinWord(word);
+                    if (converted) {
+                        return hasPossessive ? `${converted}'s` : converted;
+                    }
+                    return fullMatch;
+                });
+            }
+
+            return processed;
+        }
+
+        // Sample Texts for Instant Testing
+        const SAMPLE_EN = {
+            title: "The Lantern of Starlight Cove",
+            text: `Chapter 1: The Whispering Tide
+The old lighthouse stood on the jagged cliffs of Starlight Cove, watching over the Atlantic like a patient sentinel. Every evening, just as the sun dipped beneath the horizon, Clara climbed the spiral iron stairs with a brass key in her pocket.
+She loved the quiet rhythm of the waves crashing against the basalt rocks below. Tonight, however, the sea carried an unusual stillness, and a silver mist curled around the base of the tower.
+"You're early tonight, Clara," said Thomas, the retired harbor master, leaning against the stone archway. "The barometer is dropping fast. A storm is brewing out past the reef."
+
+Chapter 2: The Glass Chart
+Inside the lantern room, the massive Fresnel lens gleamed in the twilight. Clara unrolled an ancient nautical chart she had found tucked inside a hollow floorboard the previous afternoon.
+Lines of faded crimson ink traced a route no modern vessel had ever sailed. At the center of the parchment was a compass rose with eight points, each marked with a tiny astronomical symbol.
+If the coordinates were accurate, the sunken library of Pelagia lay less than three leagues from the harbor entrance.`
+        };
+
+        const SAMPLE_ZH = {
+            title: "江南烟雨录 (Mandarin Classic)",
+            text: `第一章：青石巷的茶馆
+清晨的薄雾还未散尽，江南古镇的青石板路上已经响起了清脆的脚步声。街角的“听雨轩”茶馆早早卸下了木门板，炉子上煮着新采的明前龙井，茶香顺着微风飘满了整条小巷。
+掌柜林伯正拿着一把紫砂壶擦拭，抬头看见一位背着竹箱的年轻书生走了进来。书生抖了抖衣袖上的露水，微笑着拱手道：“林伯，今日的头道茶，可否留一壶给我？”
+林伯哈哈一笑，指了指靠窗的竹椅：“早就给你备好了，快坐下暖暖身子吧。”
+
+第二章：古卷里的秘密
+茶过三巡，书生从竹箱底层小心翼翼地取出一卷泛黄的宣纸。纸面上用工整的小楷抄录着一首古诗，诗句旁还画着一座隐藏在云雾深处的山间亭台。
+窗外的细雨渐渐沥沥地落下来，打在河面的乌篷船上，发出悦耳的声响。书生轻声念出卷尾的批注，心中明白，这场寻找失传乐谱的旅程才刚刚开始。`
+        };
+
+        // DOM Elements Reference
+        const els = {
+            sidebar: document.getElementById('sidebar'),
+            sidebarBackdrop: document.getElementById('sidebarBackdrop'),
+            toggleSidebarBtn: document.getElementById('toggleSidebarBtn'),
+            headerBookTitle: document.getElementById('headerBookTitle'),
+            openImportModalBtn: document.getElementById('openImportModalBtn'),
+            addBookmarkBtn: document.getElementById('addBookmarkBtn'),
+            toggleSettingsBtn: document.getElementById('toggleSettingsBtn'),
+            settingsPopover: document.getElementById('settingsPopover'),
+            closeSettingsBtn: document.getElementById('closeSettingsBtn'),
+            
+            tabChapters: document.getElementById('tabChapters'),
+            tabBookmarks: document.getElementById('tabBookmarks'),
+            chapterCount: document.getElementById('chapterCount'),
+            bookmarkCount: document.getElementById('bookmarkCount'),
+            chapterList: document.getElementById('chapterList'),
+            bookmarkList: document.getElementById('bookmarkList'),
+            
+            loadSampleEnBtn: document.getElementById('loadSampleEnBtn'),
+            loadSampleZhBtn: document.getElementById('loadSampleZhBtn'),
+            emptySampleZhBtn: document.getElementById('emptySampleZhBtn'),
+            emptyImportBtn: document.getElementById('emptyImportBtn'),
+            
+            readerScrollContainer: document.getElementById('readerScrollContainer'),
+            emptyState: document.getElementById('emptyState'),
+            chapterArticle: document.getElementById('chapterArticle'),
+            chapterBadge: document.getElementById('chapterBadge'),
+            chapterLangBadge: document.getElementById('chapterLangBadge'),
+            chapterTitleDisplay: document.getElementById('chapterTitleDisplay'),
+            sentencesContainer: document.getElementById('sentencesContainer'),
+            footerPrevChapBtn: document.getElementById('footerPrevChapBtn'),
+            footerNextChapBtn: document.getElementById('footerNextChapBtn'),
+            
+            fontSizeSlider: document.getElementById('fontSizeSlider'),
+            fontSizeLabel: document.getElementById('fontSizeLabel'),
+            autoScrollCheckbox: document.getElementById('autoScrollCheckbox'),
+            pinyinPronounceCheckbox: document.getElementById('pinyinPronounceCheckbox'),
+            customGlossaryInput: document.getElementById('customGlossaryInput'),
+            geminiApiKeyInput: document.getElementById('geminiApiKeyInput'),
+            
+            progressSentenceLabel: document.getElementById('progressSentenceLabel'),
+            progressSlider: document.getElementById('progressSlider'),
+            progressPercentLabel: document.getElementById('progressPercentLabel'),
+            
+            voiceEngineSelect: document.getElementById('voiceEngineSelect'),
+            voiceSelect: document.getElementById('voiceSelect'),
+            characterCastToggleBtn: document.getElementById('characterCastToggleBtn'),
+            prevChapBtn: document.getElementById('prevChapBtn'),
+            prevSentenceBtn: document.getElementById('prevSentenceBtn'),
+            playPauseBtn: document.getElementById('playPauseBtn'),
+            playPauseIcon: document.getElementById('playPauseIcon'),
+            nextSentenceBtn: document.getElementById('nextSentenceBtn'),
+            nextChapBtn: document.getElementById('nextChapBtn'),
+            speedBtn: document.getElementById('speedBtn'),
+            mobileSpeedMirrorBtn: document.getElementById('mobileSpeedMirrorBtn'),
+            sleepTimerBtn: document.getElementById('sleepTimerBtn'),
+            mobileSleepMirrorBtn: document.getElementById('mobileSleepMirrorBtn'),
+            sleepTimerLabel: document.getElementById('sleepTimerLabel'),
+            mobileSleepTimerLabel: document.getElementById('mobileSleepTimerLabel'),
+            
+            importModal: document.getElementById('importModal'),
+            closeImportModalBtn: document.getElementById('closeImportModalBtn'),
+            dropZone: document.getElementById('dropZone'),
+            fileInput: document.getElementById('fileInput'),
+            pasteTitleInput: document.getElementById('pasteTitleInput'),
+            pasteContentInput: document.getElementById('pasteContentInput'),
+            processPastedTextBtn: document.getElementById('processPastedTextBtn'),
+            
+            loadingOverlay: document.getElementById('loadingOverlay'),
+            loadingMessage: document.getElementById('loadingMessage'),
+            toastContainer: document.getElementById('toastContainer')
+        };
+
+        // Utility: Show Toast Message (Never use alert())
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            const bgClass = type === 'error' ? 'bg-rose-600 text-white' : 
+                            type === 'success' ? 'bg-emerald-600 text-white' : 
+                            'bg-slate-800 dark:bg-slate-700 text-white';
+            toast.className = `${bgClass} px-4 py-2 rounded-full text-xs sm:text-sm font-medium shadow-lg flex items-center gap-2 transition-all duration-300 opacity-0 translate-y-2`;
+            toast.innerHTML = `<i class="ph-fill ${type === 'error' ? 'ph-warning-circle' : 'ph-info'}"></i><span>${message}</span>`;
+            els.toastContainer.appendChild(toast);
+            
+            requestAnimationFrame(() => {
+                toast.classList.remove('opacity-0', 'translate-y-2');
+            });
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', '-translate-y-2');
+                setTimeout(() => toast.remove(), 300);
+            }, 3200);
+        }
+
+        function setLoading(isLoading, msg = 'Processing...') {
+            els.loadingMessage.textContent = msg;
+            els.loadingOverlay.classList.toggle('hidden', !isLoading);
+        }
+
+        // Language Detection Helper: Checks ratio of CJK characters
+        function detectLanguage(text) {
+            const chineseMatches = text.match(/[\u4e00-\u9fa5]/g);
+            const chineseCount = chineseMatches ? chineseMatches.length : 0;
+            const totalLength = text.replace(/\s/g, '').length || 1;
+            return (chineseCount / totalLength) > 0.15 ? 'zh' : 'en';
+        }
+
+        // Character & Dialogue Detection Helper (English & Mandarin)
+        function detectSpeakerAndSegments(sentenceText, lang, previousSpeaker = null) {
+            const hasEnQuote = /["“”]/.test(sentenceText);
+            const hasZhQuote = /[“”「」『』]/.test(sentenceText);
+            if (!hasEnQuote && !hasZhQuote) {
+                return { speaker: 'Narrator', isDialogue: false, genderHint: 'neutral' };
+            }
+
+            // Common gendered name/title hints for smarter voice casting (including popular C-novel names)
+            const inferGender = (name) => {
+                if (/^(clara|sarah|emma|anna|lucy|mary|jane|elena|sophia|alice|lily|lady|mrs|ms|miss|queen|princess|girl|woman|she|her|yanli|wen qing|jiang yanli|母|姐|妹|娘|姑娘|小姐|夫人|公主|婆婆|奶奶)$/i.test(name)) return 'female';
+                if (/^(thomas|john|david|james|michael|robert|william|peter|jack|henry|arthur|mr|sir|king|prince|boy|man|he|him|wei|wuxian|lan|wangji|jiang|cheng|xichen|wen ning|guangyao|zixuan|mingjue|huaisang|xue yang|xingchen|sizhui|jingyi|xie lian|hua cheng|shen qingqiu|luo binghe|chu wanning|mo ran|伯|叔|哥|弟|父|爷|公子|先生|少爷|老头)$/i.test(name)) return 'male';
+                return 'neutral';
+            };
+
+            let speaker = null;
+
+            if (lang === 'zh') {
+                // Pattern 1: Name + speech verb before quote e.g. 林伯哈哈一笑...：“...” or 书生微笑着拱手道：“...”
+                const zhBefore = sentenceText.match(/([\u4e00-\u9fa5]{1,4})(?:笑着|微笑着|冷笑着|大笑着|轻声|低声|大声|怒|惊|叹|点点头|摇摇头|拱手|抬头|转头|开口|继续|补充|回答|问|答|说|道|喊|叫|嚷|念).*?[：:]\s*[“「]/);
+                // Pattern 2: Quote followed by Name + speech verb e.g. “...”林伯说道。
+                const zhAfter = sentenceText.match(/[”」]\s*([\u4e00-\u9fa5]{1,4})(?:说|道|问|答|笑|喊|叫)/);
+                if (zhBefore && zhBefore[1]) speaker = zhBefore[1];
+                else if (zhAfter && zhAfter[1]) speaker = zhAfter[1];
+            } else {
+                // Pattern 1: "..." said Wei Wuxian / Lan Wangji said, "..."
+                const enAfter = sentenceText.match(/["”]\s*(?:said|asked|replied|whispered|shouted|murmured|exclaimed|cried|called|answered|muttered)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)/);
+                const enAfterInv = sentenceText.match(/["”]\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+(?:said|asked|replied|whispered|shouted|murmured|exclaimed|cried|called|answered|muttered)/);
+                const enBefore = sentenceText.match(/\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+(?:said|asked|replied|whispered|shouted|murmured|exclaimed|cried|called|answered|muttered)[^"“]*["“]/);
+                if (enAfter && enAfter[1]) speaker = enAfter[1];
+                else if (enAfterInv && enAfterInv[1]) speaker = enAfterInv[1];
+                else if (enBefore && enBefore[1]) speaker = enBefore[1];
+            }
+
+            // Filter out non-character words
+            if (speaker && /^(The|And|But|Then|When|While|After|Before|Suddenly|然而|于是|这时|突然|接着)$/i.test(speaker)) {
+                speaker = null;
+            }
+
+            if (!speaker) {
+                speaker = previousSpeaker && previousSpeaker !== 'Narrator' ? previousSpeaker : 'Character';
+            }
+
+            return {
+                speaker,
+                isDialogue: true,
+                genderHint: inferGender(speaker)
+            };
+        }
+
+        // Assign distinct voices to each detected character in a chapter
+        function buildCharacterCastForChapter(chapter) {
+            const cast = {
+                'Narrator': {
+                    geminiVoice: state.selectedGeminiVoice || 'Kore',
+                    browserVoiceURI: els.voiceSelect.value,
+                    badgeColor: 'text-slate-500'
+                }
+            };
+
+            const femaleGeminiPool = ['Aoede', 'Zephyr', 'Leda', 'Kore'];
+            const maleGeminiPool = ['Charon', 'Puck', 'Fenrir', 'Orus'];
+            const neutralGeminiPool = ['Puck', 'Aoede', 'Charon', 'Zephyr', 'Fenrir'];
+
+            const voices = state.availableVoices || [];
+            const langVoices = voices.filter(v => 
+                chapter.lang === 'zh' 
+                    ? (v.lang.toLowerCase().includes('zh') || v.lang.toLowerCase().includes('cmn'))
+                    : v.lang.toLowerCase().startsWith('en')
+            );
+            const fallbackPool = langVoices.length > 0 ? langVoices : voices;
+
+            let fIdx = 0, mIdx = 0, nIdx = 0, bIdx = 1;
+            let lastSpeaker = null;
+
+            chapter.sentences.forEach(sObj => {
+                const info = detectSpeakerAndSegments(sObj.text, chapter.lang, lastSpeaker);
+                sObj.speaker = info.speaker;
+                sObj.isDialogue = info.isDialogue;
+                if (info.isDialogue) lastSpeaker = info.speaker;
+
+                if (info.speaker !== 'Narrator' && !cast[info.speaker]) {
+                    let gVoice = neutralGeminiPool[nIdx++ % neutralGeminiPool.length];
+                    if (info.genderHint === 'female') gVoice = femaleGeminiPool[fIdx++ % femaleGeminiPool.length];
+                    if (info.genderHint === 'male') gVoice = maleGeminiPool[mIdx++ % maleGeminiPool.length];
+
+                    // Pick a distinct browser voice if multiple voices exist on device
+                    let bVoiceURI = els.voiceSelect.value;
+                    if (fallbackPool.length > 1) {
+                        const candidate = fallbackPool[bIdx++ % fallbackPool.length];
+                        if (candidate) bVoiceURI = candidate.voiceURI;
+                    }
+
+                    const colors = ['text-indigo-500', 'text-emerald-600', 'text-amber-600', 'text-rose-500', 'text-cyan-600'];
+                    cast[info.speaker] = {
+                        geminiVoice: gVoice,
+                        browserVoiceURI: bVoiceURI,
+                        badgeColor: colors[Object.keys(cast).length % colors.length]
+                    };
+                }
+            });
+
+            state.characterCast = cast;
+        }
+
+        // Sentence Segmentation Helper (Handles both English punctuation and Mandarin 。！？；)
+        function splitIntoSentences(text) {
+            // Normalize line breaks into paragraph markers
+            const paragraphs = text.split(/\n+/).map(p => p.trim()).filter(p => p.length > 0);
+            const result = [];
+
+            paragraphs.forEach((para, pIdx) => {
+                // Split by English sentence endings (.!?) followed by space/quote OR Chinese sentence endings (。！？；)
+                const rawSentences = para.match(/[^.!?。！？；]+[.!?。！？；]+["'”’）)]*|[^.!?。！？；]+$/g);
+                if (rawSentences) {
+                    rawSentences.forEach((s, sIdx) => {
+                        const cleaned = s.trim();
+                        if (cleaned.length > 0) {
+                            result.push({
+                                text: cleaned,
+                                isParagraphEnd: sIdx === rawSentences.length - 1
+                            });
+                        }
+                    });
+                }
+            });
+
+            return result;
+        }
+
+        // Smart Chapter Auto-Divider (Supports English "Chapter 1", "PROLOGUE", and Mandarin "第一章", "第12节", "序章")
+        function parseTextIntoChapters(rawText, fallbackTitle = 'Untitled Book') {
+            const lines = rawText.split(/\r?\n/);
+            const chapters = [];
+            
+            // Regex matching common English & Chinese chapter headings
+            const chapterRegex = /^\s*(?:(?:chapter|chap\.?|part|book|section|prologue|epilogue)\s+(?:[0-9]+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\b.*|第[零一二三四五六七八九十百千万0-9]+[章节回部卷集篇].*|序章|楔子|尾声|后记)\s*$/i;
+
+            let currentTitle = 'Chapter 1';
+            let currentBuffer = [];
+            let foundExplicitChapters = false;
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (line.length > 0 && line.length < 85 && chapterRegex.test(line)) {
+                    if (currentBuffer.join('\n').trim().length > 0) {
+                        chapters.push({
+                            title: currentTitle,
+                            rawContent: currentBuffer.join('\n').trim()
+                        });
+                    }
+                    currentTitle = line;
+                    currentBuffer = [];
+                    foundExplicitChapters = true;
+                } else {
+                    currentBuffer.push(lines[i]);
+                }
+            }
+
+            // Push remaining buffer
+            if (currentBuffer.join('\n').trim().length > 0) {
+                chapters.push({
+                    title: foundExplicitChapters ? currentTitle : fallbackTitle,
+                    rawContent: currentBuffer.join('\n').trim()
+                });
+            }
+
+            // If no explicit chapters found and text is very long (> 6000 chars), auto-split into readable ~4000-char parts
+            if (chapters.length === 1 && chapters[0].rawContent.length > 6000) {
+                const bigText = chapters[0].rawContent;
+                const paragraphs = bigText.split(/\n+/);
+                const autoChapters = [];
+                let tempChunk = [];
+                let tempLen = 0;
+                let partNum = 1;
+
+                for (const p of paragraphs) {
+                    tempChunk.push(p);
+                    tempLen += p.length;
+                    if (tempLen >= 4000) {
+                        autoChapters.push({
+                            title: `Part ${partNum++}`,
+                            rawContent: tempChunk.join('\n')
+                        });
+                        tempChunk = [];
+                        tempLen = 0;
+                    }
+                }
+                if (tempChunk.length > 0) {
+                    autoChapters.push({
+                        title: `Part ${partNum}`,
+                        rawContent: tempChunk.join('\n')
+                    });
+                }
+                return finalizeChapters(autoChapters);
+            }
+
+            return finalizeChapters(chapters);
+        }
+
+        function finalizeChapters(rawChapters) {
+            return rawChapters.map((ch, idx) => {
+                const sentences = splitIntoSentences(ch.rawContent);
+                const lang = detectLanguage(ch.rawContent);
+                return {
+                    title: ch.title || `Chapter ${idx + 1}`,
+                    sentences: sentences,
+                    lang: lang
+                };
+            }).filter(ch => ch.sentences.length > 0);
+        }
+
+        // Load Book into Application State
+        function loadBook(title, chapters) {
+            stopSpeech();
+            if (!chapters || chapters.length === 0) {
+                showToast('No readable text found in document.', 'error');
+                return;
+            }
+
+            state.bookTitle = title;
+            state.chapters = chapters;
+            state.currentChapterIndex = 0;
+            state.currentSentenceIndex = 0;
+            state.bookmarks = [];
+
+            els.headerBookTitle.textContent = title;
+            els.emptyState.classList.add('hidden');
+            els.chapterArticle.classList.remove('hidden');
+
+            renderChapterList();
+            renderBookmarksList();
+            loadChapter(0, 0, false);
+            autoSelectVoiceForLanguage(chapters[0].lang);
+            showToast(`Loaded "${title}" (${chapters.length} ${chapters.length === 1 ? 'chapter' : 'chapters'})`, 'success');
+        }
+
+        // Render Sidebar Chapter List
+        function renderChapterList() {
+            els.chapterCount.textContent = state.chapters.length;
+            els.chapterList.innerHTML = '';
+
+            state.chapters.forEach((ch, idx) => {
+                const isActive = idx === state.currentChapterIndex;
+                const btn = document.createElement('button');
+                btn.className = `w-full text-left px-3 py-2.5 rounded-xl text-xs sm:text-sm transition flex items-center justify-between gap-2 ${
+                    isActive 
+                    ? 'bg-indigo-600 text-white font-medium shadow-xs' 
+                    : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                }`;
+                btn.innerHTML = `
+                    <div class="truncate flex-1">
+                        <span class="opacity-60 mr-1.5 font-mono text-xs">${idx + 1}.</span>
+                        <span>${escapeHtml(ch.title)}</span>
+                    </div>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded uppercase ${isActive ? 'bg-indigo-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400'}">
+                        ${ch.lang === 'zh' ? '中文' : 'EN'}
+                    </span>
+                `;
+                btn.onclick = () => {
+                    loadChapter(idx, 0, state.isPlaying);
+                    closeMobileSidebar();
+                };
+                els.chapterList.appendChild(btn);
+            });
+        }
+
+        // Render Bookmarks List
+        function renderBookmarksList() {
+            els.bookmarkCount.textContent = state.bookmarks.length;
+            els.bookmarkList.innerHTML = '';
+
+            if (state.bookmarks.length === 0) {
+                els.bookmarkList.innerHTML = `
+                    <div class="text-center py-10 px-4 text-xs text-slate-400">
+                        <i class="ph ph-bookmark-simple text-2xl mb-2 block"></i>
+                        Click the bookmark icon in the top bar while reading to save your spot.
+                    </div>
+                `;
+                return;
+            }
+
+            state.bookmarks.forEach((bm) => {
+                const item = document.createElement('div');
+                item.className = 'p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-indigo-500 bg-slate-50/50 dark:bg-slate-800/40 cursor-pointer transition group';
+                item.innerHTML = `
+                    <div class="flex items-center justify-between text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 mb-1">
+                        <span class="truncate">${escapeHtml(bm.chapterTitle)}</span>
+                        <button class="delete-bm-btn text-slate-400 hover:text-rose-500 p-0.5" title="Remove">
+                            <i class="ph ph-trash"></i>
+                        </button>
+                    </div>
+                    <p class="text-xs text-slate-600 dark:text-slate-300 line-clamp-2">"${escapeHtml(bm.text)}"</p>
+                `;
+                item.onclick = (e) => {
+                    if (e.target.closest('.delete-bm-btn')) {
+                        state.bookmarks = state.bookmarks.filter(b => b.id !== bm.id);
+                        renderBookmarksList();
+                        return;
+                    }
+                    loadChapter(bm.chapterIndex, bm.sentenceIndex, state.isPlaying);
+                    closeMobileSidebar();
+                };
+                els.bookmarkList.appendChild(item);
+            });
+        }
+
+        // Load Specific Chapter and Render Sentences
+        function loadChapter(chapterIdx, sentenceIdx = 0, autoPlay = false) {
+            if (chapterIdx < 0 || chapterIdx >= state.chapters.length) return;
+            
+            state.currentChapterIndex = chapterIdx;
+            state.currentSentenceIndex = sentenceIdx;
+            const chapter = state.chapters[chapterIdx];
+
+            els.chapterBadge.textContent = `Chapter ${chapterIdx + 1} of ${state.chapters.length}`;
+            els.chapterLangBadge.textContent = chapter.lang === 'zh' ? 'Mandarin (普通话)' : 'English';
+            els.chapterTitleDisplay.textContent = chapter.title;
+
+            // Update Prev/Next Chapter Buttons
+            els.footerPrevChapBtn.disabled = chapterIdx === 0;
+            els.footerNextChapBtn.disabled = chapterIdx === state.chapters.length - 1;
+            els.prevChapBtn.disabled = chapterIdx === 0;
+            els.nextChapBtn.disabled = chapterIdx === state.chapters.length - 1;
+
+            // Group sentences back into paragraphs for clean visual typography
+            els.sentencesContainer.innerHTML = '';
+            buildCharacterCastForChapter(chapter);
+            let currentParagraphEl = document.createElement('p');
+            
+            chapter.sentences.forEach((sObj, sIdx) => {
+                const span = document.createElement('span');
+                span.textContent = sObj.text + (chapter.lang === 'en' ? ' ' : '');
+                span.className = 'sentence-span';
+                span.dataset.index = sIdx;
+                if (sObj.speaker && sObj.speaker !== 'Narrator') {
+                    span.title = `Speaker: ${sObj.speaker}`;
+                }
+                span.onclick = () => {
+                    jumpToSentence(sIdx, true);
+                };
+                currentParagraphEl.appendChild(span);
+
+                if (sObj.isParagraphEnd || sIdx === chapter.sentences.length - 1) {
+                    els.sentencesContainer.appendChild(currentParagraphEl);
+                    currentParagraphEl = document.createElement('p');
+                }
+            });
+
+            renderChapterList();
+            highlightSentence(sentenceIdx, true);
+            updateProgressUI();
+
+            // Automatically switch to a fluent Mandarin or English voice if needed
+            autoSelectVoiceForLanguage(chapter.lang);
+            buildCharacterCastForChapter(chapter);
+
+            if (autoPlay) {
+                playCurrentSentence();
+            }
+        }
+
+        // Highlight Active Sentence & Auto-Scroll
+        function highlightSentence(sentenceIdx, forceScroll = false) {
+            const spans = els.sentencesContainer.querySelectorAll('.sentence-span');
+            spans.forEach(sp => sp.classList.remove('sentence-active'));
+
+            const activeSpan = els.sentencesContainer.querySelector(`.sentence-span[data-index="${sentenceIdx}"]`);
+            if (activeSpan) {
+                activeSpan.classList.add('sentence-active');
+                if (state.autoScroll || forceScroll) {
+                    activeSpan.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+        }
+
+        function updateProgressUI() {
+            const chapter = state.chapters[state.currentChapterIndex];
+            if (!chapter) return;
+            const total = chapter.sentences.length;
+            const current = Math.min(state.currentSentenceIndex + 1, total);
+            const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+
+            els.progressSentenceLabel.textContent = `${current} / ${total}`;
+            els.progressSlider.max = Math.max(0, total - 1);
+            els.progressSlider.value = state.currentSentenceIndex;
+            els.progressPercentLabel.textContent = `${pct}%`;
+        }
+
+        // ==========================================
+        // VOICE & SPEECH SYNTHESIS ENGINE (EN + ZH)
+        // ==========================================
+
+        function populateVoices() {
+            if (state.voiceEngine === 'gemini') {
+                const geminiVoices = [
+                    { id: 'Kore', label: 'Kore — Warm & Natural (Multilingual EN/中文)' },
+                    { id: 'Aoede', label: 'Aoede — Expressive & Breezy (EN/中文)' },
+                    { id: 'Charon', label: 'Charon — Deep Narrator (EN/中文)' },
+                    { id: 'Zephyr', label: 'Zephyr — Bright & Clear (EN/中文)' },
+                    { id: 'Puck', label: 'Puck — Energetic Storyteller (EN/中文)' }
+                ];
+                els.voiceSelect.innerHTML = geminiVoices.map(v => 
+                    `<option value="${v.id}" ${v.id === state.selectedGeminiVoice ? 'selected' : ''}>${v.label}</option>`
+                ).join('');
+                return;
+            }
+
+            // Browser Web Speech API Voices
+            const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+            state.availableVoices = voices;
+
+            if (voices.length === 0) {
+                els.voiceSelect.innerHTML = '<option value="">Default System Voice</option>';
+                return;
+            }
+
+            // Prioritize natural/neural voices in English and Mandarin Chinese
+            const zhVoices = voices.filter(v => v.lang.toLowerCase().includes('zh') || v.lang.toLowerCase().includes('cmn'));
+            const enVoices = voices.filter(v => v.lang.toLowerCase().startsWith('en'));
+            const otherVoices = voices.filter(v => !zhVoices.includes(v) && !enVoices.includes(v));
+
+            const sortNaturalFirst = (a, b) => {
+                const score = (name) => {
+                    let s = 0;
+                    if (/natural|neural|google|microsoft|xiaoxiao|yunxi|siri|ting-ting|meijia|daniel|samantha/i.test(name)) s += 10;
+                    if (/zh-CN|cmn-Hans/i.test(name)) s += 5;
+                    return s;
+                };
+                return score(b.name) - score(a.name);
+            };
+
+            zhVoices.sort(sortNaturalFirst);
+            enVoices.sort(sortNaturalFirst);
+
+            let html = '';
+            if (zhVoices.length > 0) {
+                html += `<optgroup label="🇨🇳 Mandarin / Chinese (普通话)">`;
+                zhVoices.forEach(v => {
+                    html += `<option value="${v.voiceURI}">${v.name} (${v.lang})</option>`;
+                });
+                html += `</optgroup>`;
+            }
+            if (enVoices.length > 0) {
+                html += `<optgroup label="🇬🇧🇺🇸 English">`;
+                enVoices.forEach(v => {
+                    html += `<option value="${v.voiceURI}">${v.name} (${v.lang})</option>`;
+                });
+                html += `</optgroup>`;
+            }
+            if (otherVoices.length > 0) {
+                html += `<optgroup label="Other Languages">`;
+                otherVoices.forEach(v => {
+                    html += `<option value="${v.voiceURI}">${v.name} (${v.lang})</option>`;
+                });
+                html += `</optgroup>`;
+            }
+
+            els.voiceSelect.innerHTML = html;
+
+            // Restore selection or pick best default
+            const currentChapter = state.chapters[state.currentChapterIndex];
+            if (currentChapter) {
+                autoSelectVoiceForLanguage(currentChapter.lang);
+            } else if (state.selectedBrowserVoiceURI) {
+                els.voiceSelect.value = state.selectedBrowserVoiceURI;
+            }
+        }
+
+        function autoSelectVoiceForLanguage(lang) {
+            if (state.voiceEngine === 'gemini') return; // Gemini voices are natively fluent in both EN & Mandarin!
+
+            const voices = state.availableVoices;
+            if (!voices || voices.length === 0) return;
+
+            const currentVoice = voices.find(v => v.voiceURI === els.voiceSelect.value);
+            if (lang === 'zh') {
+                // Check if current voice is already Mandarin
+                if (currentVoice && (currentVoice.lang.toLowerCase().includes('zh') || currentVoice.lang.toLowerCase().includes('cmn'))) {
+                    return;
+                }
+                // Find best Mandarin voice (prefer zh-CN / Putonghua)
+                const bestZh = voices.find(v => /zh-CN|cmn-Hans/i.test(v.lang) && /natural|neural|google|microsoft|xiaoxiao|yunxi|ting/i.test(v.name))
+                            || voices.find(v => /zh-CN|cmn-Hans/i.test(v.lang))
+                            || voices.find(v => v.lang.toLowerCase().includes('zh'));
+                if (bestZh) {
+                    els.voiceSelect.value = bestZh.voiceURI;
+                    state.selectedBrowserVoiceURI = bestZh.voiceURI;
+                }
+            } else {
+                // Check if current voice is already English
+                if (currentVoice && currentVoice.lang.toLowerCase().startsWith('en')) {
+                    return;
+                }
+                const bestEn = voices.find(v => v.lang.toLowerCase().startsWith('en') && /natural|neural|google|microsoft|samantha|daniel|aria|guy/i.test(v.name))
+                            || voices.find(v => v.lang.toLowerCase().startsWith('en'));
+                if (bestEn) {
+                    els.voiceSelect.value = bestEn.voiceURI;
+                    state.selectedBrowserVoiceURI = bestEn.voiceURI;
+                }
+            }
+        }
+
+        if (window.speechSynthesis) {
+            window.speechSynthesis.onvoiceschanged = populateVoices;
+        }
+
+        // Play / Pause Core Logic
+        function togglePlayPause() {
+            if (state.chapters.length === 0) {
+                showToast('Please load a book or select a sample first.');
+                return;
+            }
+            if (state.isPlaying) {
+                pauseSpeech();
+            } else {
+                startSpeech();
+            }
+        }
+
+        function startSpeech() {
+            state.isPlaying = true;
+            updatePlayButtonUI();
+            playCurrentSentence();
+        }
+
+        function pauseSpeech() {
+            state.isPlaying = false;
+            state.activeGeminiSegment = null;
+            updatePlayButtonUI();
+            if (window.speechSynthesis) {
+                window.speechSynthesis.cancel();
+            }
+            if (state.currentAudioElement) {
+                state.currentAudioElement.pause();
+                state.currentAudioElement = null;
+            }
+            if (state.ttsRequestAbortController) {
+                state.ttsRequestAbortController.abort();
+                state.ttsRequestAbortController = null;
+            }
+        }
+
+        function stopSpeech() {
+            pauseSpeech();
+            clearGeminiAudioCache();
+        }
+
+        function clearGeminiAudioCache() {
+            if (state.geminiAudioCache) {
+                for (const url of state.geminiAudioCache.values()) {
+                    try { URL.revokeObjectURL(url); } catch (_) {}
+                }
+                state.geminiAudioCache.clear();
+            }
+            if (state.geminiInFlightRequests) {
+                state.geminiInFlightRequests.clear();
+            }
+        }
+
+        function updatePlayButtonUI() {
+            if (state.isPlaying) {
+                els.playPauseIcon.className = 'ph-fill ph-pause text-xl';
+            } else {
+                els.playPauseIcon.className = 'ph-fill ph-play text-xl ml-0.5';
+            }
+        }
+
+        function jumpToSentence(sentenceIdx, autoPlay = true) {
+            const chapter = state.chapters[state.currentChapterIndex];
+            if (!chapter) return;
+
+            const clamped = Math.max(0, Math.min(sentenceIdx, chapter.sentences.length - 1));
+            state.currentSentenceIndex = clamped;
+            state.activeGeminiSegment = null;
+            highlightSentence(clamped, true);
+            updateProgressUI();
+
+            if (autoPlay || state.isPlaying) {
+                if (window.speechSynthesis) window.speechSynthesis.cancel();
+                if (state.currentAudioElement) {
+                    state.currentAudioElement.pause();
+                    state.currentAudioElement = null;
+                }
+                state.isPlaying = true;
+                updatePlayButtonUI();
+                playCurrentSentence();
+            }
+        }
+
+        function advanceToNextSentence() {
+            const chapter = state.chapters[state.currentChapterIndex];
+            if (!chapter) return;
+
+            if (state.currentSentenceIndex + 1 < chapter.sentences.length) {
+                state.currentSentenceIndex++;
+                highlightSentence(state.currentSentenceIndex);
+                updateProgressUI();
+                if (state.isPlaying) {
+                    playCurrentSentence();
+                }
+            } else if (state.currentChapterIndex + 1 < state.chapters.length) {
+                // Auto-advance to next chapter
+                showToast(`Starting ${state.chapters[state.currentChapterIndex + 1].title}`);
+                loadChapter(state.currentChapterIndex + 1, 0, state.isPlaying);
+            } else {
+                // Finished entire book
+                stopSpeech();
+                showToast('Finished reading the book!', 'success');
+            }
+        }
+
+        // Build full-paragraph segment (or contiguous speaker turn within paragraph if Cast mode is ON)
+        function getParagraphSegmentForGemini(chapterIdx, startSentenceIdx) {
+            const chapter = state.chapters[chapterIdx];
+            if (!chapter || startSentenceIdx < 0 || startSentenceIdx >= chapter.sentences.length) return null;
+
+            const startObj = chapter.sentences[startSentenceIdx];
+            const firstSpeaker = (state.characterMode && startObj.speaker) ? startObj.speaker : 'Narrator';
+            let endIdx = startSentenceIdx;
+
+            // Expand until paragraph boundary (isParagraphEnd) or speaker change in Character Cast mode
+            while (endIdx < chapter.sentences.length) {
+                const curr = chapter.sentences[endIdx];
+                if (endIdx > startSentenceIdx && state.characterMode) {
+                    const currSpeaker = curr.speaker || 'Narrator';
+                    if (currSpeaker !== firstSpeaker) {
+                        endIdx--;
+                        break;
+                    }
+                }
+                if (curr.isParagraphEnd || endIdx === chapter.sentences.length - 1) {
+                    break;
+                }
+                endIdx++;
+            }
+
+            const slice = chapter.sentences.slice(startSentenceIdx, endIdx + 1);
+            const joiner = chapter.lang === 'zh' ? '' : ' ';
+            const rawCombinedText = slice.map(s => s.text).join(joiner);
+            const castEntry = state.characterCast[firstSpeaker] || state.characterCast['Narrator'];
+            const voiceName = (state.characterMode && castEntry)
+                ? castEntry.geminiVoice
+                : (els.voiceSelect.value || state.selectedGeminiVoice || 'Kore');
+
+            // Compute proportional character weights for real-time sentence highlight sync
+            const weights = slice.map(s => Math.max(1, s.text.length));
+            const totalWeight = weights.reduce((acc, w) => acc + w, 0);
+            let cumulative = 0;
+            const ranges = slice.map((_, idx) => {
+                const startRatio = cumulative / totalWeight;
+                cumulative += weights[idx];
+                const endRatio = cumulative / totalWeight;
+                return { sentenceIdx: startSentenceIdx + idx, startRatio, endRatio };
+            });
+
+            const cacheKey = `${chapterIdx}:${startSentenceIdx}-${endIdx}:${voiceName}:${state.pinyinPronounceEnabled ? 1 : 0}:${state.customGlossaryRaw}`;
+
+            return {
+                chapterIdx,
+                startIdx: startSentenceIdx,
+                endIdx,
+                lang: chapter.lang,
+                speakerName: firstSpeaker,
+                voiceName,
+                rawCombinedText,
+                ranges,
+                cacheKey
+            };
+        }
+
+        async function playCurrentSentence() {
+            if (!state.isPlaying) return;
+            const chapter = state.chapters[state.currentChapterIndex];
+            if (!chapter) return;
+
+            const sentenceObj = chapter.sentences[state.currentSentenceIndex];
+            if (!sentenceObj) return;
+
+            highlightSentence(state.currentSentenceIndex);
+            updateProgressUI();
+
+            // Determine active speaker voice if Character Cast mode is enabled
+            const speakerName = (state.characterMode && sentenceObj.speaker) ? sentenceObj.speaker : 'Narrator';
+            const castEntry = state.characterCast[speakerName] || state.characterCast['Narrator'];
+
+            if (state.voiceEngine === 'gemini') {
+                const segment = getParagraphSegmentForGemini(state.currentChapterIndex, state.currentSentenceIndex);
+                if (segment) {
+                    await playParagraphWithGeminiTTS(segment);
+                }
+            } else {
+                const overrideURI = state.characterMode && castEntry ? castEntry.browserVoiceURI : null;
+                const castKeys = Object.keys(state.characterCast);
+                const speakerIdx = Math.max(0, castKeys.indexOf(speakerName));
+                const spokenText = applyPinyinPronunciation(sentenceObj.text, chapter.lang, 'browser');
+                playWithBrowserTTS(spokenText, chapter.lang, overrideURI, speakerIdx);
+            }
+        }
+
+        // Engine 1: Natural Browser Web Speech Synthesis
+        function playWithBrowserTTS(text, lang, overrideVoiceURI = null, speakerIdx = 0) {
+            if (!window.speechSynthesis) {
+                showToast('Speech synthesis not supported in this browser.', 'error');
+                stopSpeech();
+                return;
+            }
+
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+
+            const selectedURI = overrideVoiceURI || els.voiceSelect.value;
+            const voice = state.availableVoices.find(v => v.voiceURI === selectedURI);
+            if (voice) {
+                utterance.voice = voice;
+                utterance.lang = voice.lang;
+            } else {
+                utterance.lang = lang === 'zh' ? 'zh-CN' : 'en-US';
+            }
+
+            utterance.rate = state.playbackRate;
+            if (state.characterMode && speakerIdx > 0) {
+                const pitchOffsets = [1.0, 1.12, 0.88, 1.18, 0.82];
+                utterance.pitch = pitchOffsets[speakerIdx % pitchOffsets.length];
+            } else {
+                utterance.pitch = 1.0;
+            }
+
+            const expectedChapter = state.currentChapterIndex;
+            const expectedSentence = state.currentSentenceIndex;
+
+            utterance.onend = () => {
+                if (state.isPlaying && state.currentChapterIndex === expectedChapter && state.currentSentenceIndex === expectedSentence) {
+                    advanceToNextSentence();
+                }
+            };
+
+            utterance.onerror = (e) => {
+                if (e.error !== 'interrupted' && e.error !== 'canceled') {
+                    console.warn('SpeechSynthesis error:', e.error);
+                }
+            };
+
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // Engine 2: Gemini 2.5 Flash Preview TTS — Full-Paragraph Batching, Pre-Fetching & Smart 429 Recovery
+        async function fetchGeminiSegmentAudioUrl(segment, signal = null) {
+            if (state.geminiAudioCache.has(segment.cacheKey)) {
+                return state.geminiAudioCache.get(segment.cacheKey);
+            }
+            if (state.geminiInFlightRequests.has(segment.cacheKey)) {
+                return state.geminiInFlightRequests.get(segment.cacheKey);
+            }
+
+            const requestPromise = (async () => {
+                const spokenText = applyPinyinPronunciation(segment.rawCombinedText, segment.lang, 'gemini');
+                const isActing = state.characterMode && segment.speakerName !== 'Narrator';
+                const pinyinGuidance = state.pinyinPronounceEnabled
+                    ? ' Pronounce all Mandarin Chinese names and Pinyin terms (such as Wèi Wúxiàn, Lán Wàngjī, Jiāng Chéng, Xiǎo, Qīng, Xuē) with authentic Mandarin phonetics.'
+                    : '';
+                const promptPrefix = segment.lang === 'zh'
+                    ? (isActing ? `请以角色“${segment.speakerName}”的语气，用自然流畅的普通话演绎以下段落：` : '请用自然、流畅、富有感情的标准普通话朗读以下段落：')
+                    : (isActing ? `Act out this paragraph in character as ${segment.speakerName} naturally and expressively.${pinyinGuidance}:` : `Read the following audiobook paragraph naturally and expressively.${pinyinGuidance}:`);
+
+                const payload = {
+                    contents: [{
+                        parts: [{ text: `${promptPrefix}\n${spokenText}` }]
+                    }],
+                    generationConfig: {
+                        responseModalities: ["AUDIO"],
+                        speechConfig: {
+                            voiceConfig: {
+                                prebuiltVoiceConfig: { voiceName: segment.voiceName }
+                            }
+                        }
+                    },
+                    model: "gemini-2.5-flash-preview-tts"
+                };
+
+                const apiKey = state.customGeminiApiKey || "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+                const fetchOpts = {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                };
+                if (signal) fetchOpts.signal = signal;
+
+                const response = await fetch(apiUrl, fetchOpts);
+
+                if (!response.ok) {
+                    const retryAfterHeader = response.headers.get('Retry-After');
+                    const err = new Error(`HTTP ${response.status}`);
+                    err.status = response.status;
+                    err.retryAfterSec = retryAfterHeader ? parseInt(retryAfterHeader, 10) : null;
+                    throw err;
+                }
+
+                const result = await response.json();
+                const part = result?.candidates?.[0]?.content?.parts?.[0];
+                const audioData = part?.inlineData?.data;
+                const mimeType = part?.inlineData?.mimeType;
+
+                if (audioData && mimeType && mimeType.startsWith("audio/")) {
+                    const rateMatch = mimeType.match(/rate=(\d+)/);
+                    const sampleRate = rateMatch ? parseInt(rateMatch[1], 10) : 24000;
+                    const pcmBuffer = base64ToArrayBuffer(audioData);
+                    const pcm16 = new Int16Array(pcmBuffer);
+                    const wavBlob = pcmToWav(pcm16, sampleRate);
+                    const audioUrl = URL.createObjectURL(wavBlob);
+
+                    // Keep cache bounded to ~25 paragraphs to prevent memory bloat
+                    if (state.geminiAudioCache.size > 25) {
+                        const oldestKey = state.geminiAudioCache.keys().next().value;
+                        const oldUrl = state.geminiAudioCache.get(oldestKey);
+                        if (oldUrl) URL.revokeObjectURL(oldUrl);
+                        state.geminiAudioCache.delete(oldestKey);
+                    }
+                    state.geminiAudioCache.set(segment.cacheKey, audioUrl);
+                    return audioUrl;
+                } else {
+                    throw new Error('Invalid audio payload');
+                }
+            })();
+
+            state.geminiInFlightRequests.set(segment.cacheKey, requestPromise);
+            try {
+                return await requestPromise;
+            } finally {
+                state.geminiInFlightRequests.delete(segment.cacheKey);
+            }
+        }
+
+        // Pre-fetch the next paragraph in the background while current paragraph plays
+        function prefetchNextGeminiParagraph(currentSegment) {
+            if (!state.isPlaying || state.voiceEngine !== 'gemini') return;
+            const chapter = state.chapters[currentSegment.chapterIdx];
+            if (!chapter) return;
+
+            let nextChapterIdx = currentSegment.chapterIdx;
+            let nextSentenceIdx = currentSegment.endIdx + 1;
+
+            if (nextSentenceIdx >= chapter.sentences.length) {
+                if (nextChapterIdx + 1 < state.chapters.length) {
+                    nextChapterIdx++;
+                    nextSentenceIdx = 0;
+                } else {
+                    return;
+                }
+            }
+
+            const nextSegment = getParagraphSegmentForGemini(nextChapterIdx, nextSentenceIdx);
+            if (nextSegment && !state.geminiAudioCache.has(nextSegment.cacheKey) && !state.geminiInFlightRequests.has(nextSegment.cacheKey)) {
+                fetchGeminiSegmentAudioUrl(nextSegment).catch(() => {
+                    // Silently ignore background prefetch errors; foreground handler manages retries/rate-limits
+                });
+            }
+        }
+
+        async function playParagraphWithGeminiTTS(segment) {
+            if (state.ttsRequestAbortController) {
+                state.ttsRequestAbortController.abort();
+            }
+            const controller = new AbortController();
+            state.ttsRequestAbortController = controller;
+            state.activeGeminiSegment = segment;
+
+            const expectedChapter = segment.chapterIdx;
+            const expectedStart = segment.startIdx;
+
+            try {
+                const audioUrl = await fetchGeminiSegmentAudioUrl(segment, controller.signal);
+
+                if (!state.isPlaying || state.currentChapterIndex !== expectedChapter || state.currentSentenceIndex < segment.startIdx || state.currentSentenceIndex > segment.endIdx) {
+                    return;
+                }
+
+                // Immediately kick off background pre-fetch for the upcoming paragraph
+                prefetchNextGeminiParagraph(segment);
+
+                const audio = new Audio(audioUrl);
+                audio.playbackRate = state.playbackRate;
+                state.currentAudioElement = audio;
+
+                // Synchronize sentence-by-sentence highlight smoothly across the paragraph
+                audio.ontimeupdate = () => {
+                    if (!state.isPlaying || !audio.duration || isNaN(audio.duration)) return;
+                    const progress = Math.min(0.9999, Math.max(0, audio.currentTime / audio.duration));
+                    const matched = segment.ranges.find(r => progress >= r.startRatio && progress < r.endRatio);
+                    if (matched && matched.sentenceIdx !== state.currentSentenceIndex) {
+                        state.currentSentenceIndex = matched.sentenceIdx;
+                        highlightSentence(matched.sentenceIdx);
+                        updateProgressUI();
+                    }
+                };
+
+                audio.onended = () => {
+                    state.currentAudioElement = null;
+                    state.activeGeminiSegment = null;
+                    if (!state.isPlaying || state.currentChapterIndex !== expectedChapter) return;
+
+                    // Advance directly to the sentence right after this paragraph
+                    state.currentSentenceIndex = segment.endIdx;
+                    advanceToNextSentence();
+                };
+
+                audio.onerror = () => {
+                    state.currentAudioElement = null;
+                    state.activeGeminiSegment = null;
+                    if (state.isPlaying) {
+                        const rawSentence = state.chapters[expectedChapter]?.sentences[state.currentSentenceIndex]?.text || '';
+                        playWithBrowserTTS(applyPinyinPronunciation(rawSentence, segment.lang, 'browser'), segment.lang);
+                    }
+                };
+
+                await audio.play();
+            } catch (err) {
+                if (err.name === 'AbortError') return;
+
+                // Smart 429 Rate-Limit Recovery: pause smoothly & resume Gemini Voice instead of permanently kicking user out
+                if (err.status === 429) {
+                    const waitSec = (err.retryAfterSec && err.retryAfterSec > 0 && err.retryAfterSec <= 30) ? err.retryAfterSec : 10;
+                    showToast(`Gemini rate limit — resuming in ${waitSec}s...`);
+                    await new Promise(resolve => {
+                        const timer = setTimeout(resolve, waitSec * 1000);
+                        controller.signal.addEventListener('abort', () => {
+                            clearTimeout(timer);
+                            resolve();
+                        }, { once: true });
+                    });
+                    if (state.isPlaying && state.voiceEngine === 'gemini' && state.currentChapterIndex === expectedChapter && state.currentSentenceIndex === expectedStart) {
+                        await playParagraphWithGeminiTTS(segment);
+                    }
+                    return;
+                }
+
+                // Only switch back to System Voice for invalid/missing API key (400/401/403) or offline network
+                const reasonMsg = (err.status === 400 || err.status === 401 || err.status === 403)
+                    ? 'Invalid or missing Gemini API key — using System Voice.'
+                    : 'Gemini Voice unavailable — using System Voice.';
+                showToast(reasonMsg, 'error');
+                state.voiceEngine = 'browser';
+                els.voiceEngineSelect.value = 'browser';
+                populateVoices();
+                const rawSentence = state.chapters[expectedChapter]?.sentences[state.currentSentenceIndex]?.text || '';
+                playWithBrowserTTS(applyPinyinPronunciation(rawSentence, segment.lang, 'browser'), segment.lang);
+            }
+        }
+
+        // PCM16 to WAV Converter Helpers for Gemini TTS
+        function base64ToArrayBuffer(base64) {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        function pcmToWav(pcm16Data, sampleRate) {
+            const numChannels = 1;
+            const bitsPerSample = 16;
+            const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+            const blockAlign = numChannels * (bitsPerSample / 8);
+            const dataSize = pcm16Data.length * 2;
+            const buffer = new ArrayBuffer(44 + dataSize);
+            const view = new DataView(buffer);
+
+            const writeString = (offset, string) => {
+                for (let i = 0; i < string.length; i++) {
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            };
+
+            writeString(0, 'RIFF');
+            view.setUint32(4, 36 + dataSize, true);
+            writeString(8, 'WAVE');
+            writeString(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, numChannels, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, byteRate, true);
+            view.setUint16(32, blockAlign, true);
+            view.setUint16(34, bitsPerSample, true);
+            writeString(36, 'data');
+            view.setUint32(40, dataSize, true);
+
+            let offset = 44;
+            for (let i = 0; i < pcm16Data.length; i++, offset += 2) {
+                view.setInt16(offset, pcm16Data[i], true);
+            }
+
+            return new Blob([buffer], { type: 'audio/wav' });
+        }
+
+        // ==========================================
+        // FILE PARSERS (TXT, PDF, EPUB)
+        // ==========================================
+
+        async function handleFileUpload(file) {
+            if (!file) return;
+            const fileName = file.name;
+            const bookTitle = fileName.replace(/\.[^/.]+$/, "");
+            const ext = fileName.split('.').pop().toLowerCase();
+
+            els.importModal.classList.add('hidden');
+            setLoading(true, `Reading "${fileName}"...`);
+
+            try {
+                if (ext === 'txt') {
+                    const text = await readTxtFile(file);
+                    const chapters = parseTextIntoChapters(text, bookTitle);
+                    loadBook(bookTitle, chapters);
+                } else if (ext === 'pdf') {
+                    const text = await readPdfFile(file);
+                    const chapters = parseTextIntoChapters(text, bookTitle);
+                    loadBook(bookTitle, chapters);
+                } else if (ext === 'epub') {
+                    const chapters = await readEpubFile(file, bookTitle);
+                    loadBook(bookTitle, chapters);
+                } else {
+                    showToast('Unsupported format. Please upload TXT, PDF, or EPUB.', 'error');
+                }
+            } catch (err) {
+                console.error('File parse error:', err);
+                showToast(`Error parsing ${ext.toUpperCase()}: ${err.message}`, 'error');
+            } finally {
+                setLoading(false);
+                els.fileInput.value = '';
+            }
+        }
+
+        // 1. TXT Reader (Auto-handles UTF-8 & GBK/GB18030 Mandarin encodings)
+        async function readTxtFile(file) {
+            const buffer = await file.arrayBuffer();
+            const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+            try {
+                return utf8Decoder.decode(buffer);
+            } catch (e) {
+                // Fallback for legacy Simplified Chinese GB18030 / GBK text files
+                const gbkDecoder = new TextDecoder('gb18030');
+                return gbkDecoder.decode(buffer);
+            }
+        }
+
+        // 2. PDF Reader via PDF.js
+        async function readPdfFile(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            let fullText = '';
+
+            for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                setLoading(true, `Extracting PDF page ${pageNum} of ${pdf.numPages}...`);
+                const page = await pdf.getPage(pageNum);
+                const textContent = await page.getTextContent();
+                
+                let lastY = null;
+                let pageText = '';
+                for (const item of textContent.items) {
+                    if (lastY !== null && Math.abs(item.transform[5] - lastY) > 8) {
+                        pageText += '\n';
+                    } else if (pageText.length > 0 && !pageText.endsWith(' ') && !/[\u4e00-\u9fa5]$/.test(pageText)) {
+                        pageText += ' ';
+                    }
+                    pageText += item.str;
+                    lastY = item.transform[5];
+                }
+                fullText += pageText + '\n\n';
+            }
+            return fullText;
+        }
+
+        // 3. EPUB Reader via JSZip (Extracts Spine XHTML documents as Native Chapters)
+        async function readEpubFile(file, fallbackTitle) {
+            const arrayBuffer = await file.arrayBuffer();
+            const zip = await JSZip.loadAsync(arrayBuffer);
+
+            // Locate container.xml to find OPF package file
+            const containerXmlStr = await zip.file('META-INF/container.xml')?.async('string');
+            if (!containerXmlStr) throw new Error('Invalid EPUB: Missing container.xml');
+
+            const parser = new DOMParser();
+            const containerDoc = parser.parseFromString(containerXmlStr, 'application/xml');
+            const opfPath = containerDoc.querySelector('rootfile')?.getAttribute('full-path');
+            if (!opfPath) throw new Error('Invalid EPUB: Missing OPF path');
+
+            const opfDir = opfPath.includes('/') ? opfPath.substring(0, opfPath.lastIndexOf('/') + 1) : '';
+            const opfXmlStr = await zip.file(opfPath)?.async('string');
+            const opfDoc = parser.parseFromString(opfXmlStr, 'application/xml');
+
+            // Build Manifest Map (id -> href)
+            const manifest = {};
+            opfDoc.querySelectorAll('manifest > item').forEach(item => {
+                manifest[item.getAttribute('id')] = item.getAttribute('href');
+            });
+
+            // Iterate Spine order to preserve exact book chapters
+            const spineItems = Array.from(opfDoc.querySelectorAll('spine > itemref'));
+            const extractedChapters = [];
+
+            for (let i = 0; i < spineItems.length; i++) {
+                const idref = spineItems[i].getAttribute('idref');
+                const href = manifest[idref];
+                if (!href) continue;
+
+                const cleanHref = decodeURIComponent(href.split('#')[0]);
+                const fullPath = opfDir + cleanHref;
+                const chapterFile = zip.file(fullPath) || zip.file(cleanHref);
+                if (!chapterFile) continue;
+
+                const htmlStr = await chapterFile.async('string');
+                const htmlDoc = parser.parseFromString(htmlStr, 'text/html');
+
+                // Extract Chapter Heading
+                const headingEl = htmlDoc.querySelector('h1, h2, h3, title');
+                const chTitle = headingEl ? headingEl.textContent.trim() : `Chapter ${extractedChapters.length + 1}`;
+
+                // Remove scripts/styles
+                htmlDoc.querySelectorAll('script, style').forEach(el => el.remove());
+
+                // Extract clean paragraph blocks
+                const blocks = Array.from(htmlDoc.querySelectorAll('p, div, h1, h2, h3, h4, li'))
+                    .filter(el => el.children.length === 0 || el.tagName.toLowerCase() === 'p')
+                    .map(el => el.textContent.replace(/\s+/g, ' ').trim())
+                    .filter(t => t.length > 0);
+
+                const rawText = blocks.length > 0 ? blocks.join('\n') : htmlDoc.body.textContent.trim();
+                if (rawText.length > 15) {
+                    const sentences = splitIntoSentences(rawText);
+                    if (sentences.length > 0) {
+                        extractedChapters.push({
+                            title: chTitle.substring(0, 80) || `Chapter ${extractedChapters.length + 1}`,
+                            sentences: sentences,
+                            lang: detectLanguage(rawText)
+                        });
+                    }
+                }
+            }
+
+            if (extractedChapters.length === 0) {
+                throw new Error('Could not extract chapters from EPUB.');
+            }
+            return extractedChapters;
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/[&<>"']/g, m => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[m]));
+        }
+
+        // ==========================================
+        // EVENT LISTENERS & UI CONTROLS
+        // ==========================================
+
+        // Sidebar Mobile Toggle
+        function openMobileSidebar() {
+            els.sidebar.classList.remove('-translate-x-full');
+            els.sidebarBackdrop.classList.remove('hidden');
+        }
+        function closeMobileSidebar() {
+            els.sidebar.classList.add('-translate-x-full');
+            els.sidebarBackdrop.classList.add('hidden');
+        }
+
+        els.toggleSidebarBtn.onclick = () => {
+            if (window.innerWidth < 768) {
+                els.sidebar.classList.contains('-translate-x-full') ? openMobileSidebar() : closeMobileSidebar();
+            } else {
+                els.sidebar.classList.toggle('hidden');
+            }
+        };
+        els.sidebarBackdrop.onclick = closeMobileSidebar;
+
+        // Sidebar Tabs
+        els.tabChapters.onclick = () => {
+            els.tabChapters.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 transition';
+            els.tabBookmarks.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition';
+            els.chapterList.classList.remove('hidden');
+            els.bookmarkList.classList.add('hidden');
+        };
+
+        els.tabBookmarks.onclick = () => {
+            els.tabBookmarks.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 transition';
+            els.tabChapters.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition';
+            els.bookmarkList.classList.remove('hidden');
+            els.chapterList.classList.add('hidden');
+        };
+
+        // Add Bookmark
+        els.addBookmarkBtn.onclick = () => {
+            const chapter = state.chapters[state.currentChapterIndex];
+            if (!chapter) {
+                showToast('Load a book before adding bookmarks.');
+                return;
+            }
+            const sentence = chapter.sentences[state.currentSentenceIndex];
+            state.bookmarks.unshift({
+                id: Date.now(),
+                chapterIndex: state.currentChapterIndex,
+                sentenceIndex: state.currentSentenceIndex,
+                chapterTitle: chapter.title,
+                text: sentence ? sentence.text : ''
+            });
+            renderBookmarksList();
+            showToast('Bookmark saved!', 'success');
+        };
+
+        // Appearance Settings Popover
+        els.toggleSettingsBtn.onclick = (e) => {
+            e.stopPropagation();
+            els.settingsPopover.classList.toggle('hidden');
+        };
+        els.closeSettingsBtn.onclick = () => els.settingsPopover.classList.add('hidden');
+        document.addEventListener('click', (e) => {
+            if (!els.settingsPopover.contains(e.target) && !els.toggleSettingsBtn.contains(e.target)) {
+                els.settingsPopover.classList.add('hidden');
+            }
+        });
+
+        // Theme Switcher (Light, Sepia, Dark)
+        document.querySelectorAll('.theme-btn').forEach(btn => {
+            btn.onclick = () => {
+                const theme = btn.dataset.theme;
+                document.documentElement.classList.remove('dark');
+                document.body.classList.remove('theme-sepia');
+
+                if (theme === 'dark') {
+                    document.documentElement.classList.add('dark');
+                } else if (theme === 'sepia') {
+                    document.body.classList.add('theme-sepia');
+                }
+            };
+        });
+
+        // Font Family Switcher
+        document.querySelectorAll('.font-btn').forEach(btn => {
+            btn.onclick = () => {
+                const font = btn.dataset.font;
+                if (font === 'serif') {
+                    els.sentencesContainer.classList.remove('font-sans');
+                    els.sentencesContainer.classList.add('font-serif');
+                } else {
+                    els.sentencesContainer.classList.remove('font-serif');
+                    els.sentencesContainer.classList.add('font-sans');
+                }
+                document.querySelectorAll('.font-btn').forEach(b => {
+                    b.className = 'font-btn py-1.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium ' + (b.dataset.font === 'serif' ? 'font-serif' : 'font-sans');
+                });
+                btn.className = 'font-btn py-1.5 px-3 rounded-xl border border-indigo-500 bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 text-xs font-medium ' + (font === 'serif' ? 'font-serif' : 'font-sans');
+            };
+        });
+
+        // Font Size Slider
+        els.fontSizeSlider.oninput = (e) => {
+            const size = e.target.value;
+            els.fontSizeLabel.textContent = `${size}px`;
+            els.sentencesContainer.style.fontSize = `${size}px`;
+        };
+
+        els.autoScrollCheckbox.onchange = (e) => {
+            state.autoScroll = e.target.checked;
+        };
+
+        els.pinyinPronounceCheckbox.onchange = (e) => {
+            state.pinyinPronounceEnabled = e.target.checked;
+            clearGeminiAudioCache();
+            if (state.isPlaying) {
+                jumpToSentence(state.currentSentenceIndex, true);
+            }
+        };
+
+        els.customGlossaryInput.oninput = (e) => {
+            state.customGlossaryRaw = e.target.value;
+            clearGeminiAudioCache();
+        };
+
+        els.geminiApiKeyInput.oninput = (e) => {
+            state.customGeminiApiKey = e.target.value.trim();
+            clearGeminiAudioCache();
+        };
+
+        // Player Controls
+        els.playPauseBtn.onclick = togglePlayPause;
+        els.prevSentenceBtn.onclick = () => jumpToSentence(state.currentSentenceIndex - 1, state.isPlaying);
+        els.nextSentenceBtn.onclick = () => jumpToSentence(state.currentSentenceIndex + 1, state.isPlaying);
+        
+        els.prevChapBtn.onclick = () => loadChapter(state.currentChapterIndex - 1, 0, state.isPlaying);
+        els.nextChapBtn.onclick = () => loadChapter(state.currentChapterIndex + 1, 0, state.isPlaying);
+        els.footerPrevChapBtn.onclick = () => loadChapter(state.currentChapterIndex - 1, 0, state.isPlaying);
+        els.footerNextChapBtn.onclick = () => loadChapter(state.currentChapterIndex + 1, 0, state.isPlaying);
+
+        els.progressSlider.oninput = (e) => {
+            const idx = parseInt(e.target.value, 10);
+            state.currentSentenceIndex = idx;
+            highlightSentence(idx, true);
+            updateProgressUI();
+        };
+        els.progressSlider.onchange = (e) => {
+            jumpToSentence(parseInt(e.target.value, 10), state.isPlaying);
+        };
+
+        // Voice Engine & Voice Select
+        els.voiceEngineSelect.onchange = (e) => {
+            state.voiceEngine = e.target.value;
+            populateVoices();
+            if (state.isPlaying) {
+                jumpToSentence(state.currentSentenceIndex, true);
+            }
+        };
+
+        els.voiceSelect.onchange = (e) => {
+            if (state.voiceEngine === 'gemini') {
+                state.selectedGeminiVoice = e.target.value;
+                clearGeminiAudioCache();
+            } else {
+                state.selectedBrowserVoiceURI = e.target.value;
+            }
+            if (state.chapters[state.currentChapterIndex]) {
+                buildCharacterCastForChapter(state.chapters[state.currentChapterIndex]);
+            }
+            if (state.isPlaying) {
+                jumpToSentence(state.currentSentenceIndex, true);
+            }
+        };
+
+        // Multi-Character Cast Mode Toggle
+        els.characterCastToggleBtn.onclick = () => {
+            state.characterMode = !state.characterMode;
+            const labelSpan = els.characterCastToggleBtn.querySelector('span');
+            if (state.characterMode) {
+                els.characterCastToggleBtn.classList.add('bg-indigo-600', 'text-white', 'border-indigo-600');
+                els.characterCastToggleBtn.classList.remove('bg-slate-100', 'dark:bg-slate-800', 'border-slate-200', 'dark:border-slate-700');
+                if (labelSpan) labelSpan.textContent = 'Cast: On';
+                const currentChap = state.chapters[state.currentChapterIndex];
+                if (currentChap) {
+                    buildCharacterCastForChapter(currentChap);
+                    const castNames = Object.keys(state.characterCast).filter(k => k !== 'Narrator');
+                    showToast(castNames.length > 0 
+                        ? `Character Voices ON (${castNames.join(', ')})` 
+                        : 'Character Voices ON (Dialogue auto-acted)');
+                } else {
+                    showToast('Character Voices ON');
+                }
+            } else {
+                els.characterCastToggleBtn.classList.remove('bg-indigo-600', 'text-white', 'border-indigo-600');
+                els.characterCastToggleBtn.classList.add('bg-slate-100', 'dark:bg-slate-800', 'border-slate-200', 'dark:border-slate-700');
+                if (labelSpan) labelSpan.textContent = 'Cast: Off';
+                showToast('Single Narrator Voice restored');
+            }
+            if (state.isPlaying) {
+                jumpToSentence(state.currentSentenceIndex, true);
+            }
+        };
+
+        // Speed Cycle Button
+        const speeds = [0.75, 1.0, 1.15, 1.25, 1.5, 1.75, 2.0];
+        const cycleSpeed = () => {
+            const nextIdx = (speeds.indexOf(state.playbackRate) + 1) % speeds.length;
+            state.playbackRate = speeds[nextIdx];
+            const label = `${state.playbackRate.toFixed(2).replace(/\.00$/, '.0')}x`;
+            els.speedBtn.textContent = label;
+            if (els.mobileSpeedMirrorBtn) els.mobileSpeedMirrorBtn.textContent = label;
+            if (state.currentAudioElement) {
+                state.currentAudioElement.playbackRate = state.playbackRate;
+            } else if (state.isPlaying && state.voiceEngine === 'browser') {
+                jumpToSentence(state.currentSentenceIndex, true);
+            }
+        };
+        els.speedBtn.onclick = cycleSpeed;
+        if (els.mobileSpeedMirrorBtn) els.mobileSpeedMirrorBtn.onclick = cycleSpeed;
+
+        // Sleep Timer Cycle Button
+        const timerOptions = [0, 15, 30, 45, 60];
+        const cycleSleepTimer = () => {
+            const nextIdx = (timerOptions.indexOf(state.sleepTimerMinutes) + 1) % timerOptions.length;
+            state.sleepTimerMinutes = timerOptions[nextIdx];
+            
+            if (state.sleepTimerTimeout) {
+                clearTimeout(state.sleepTimerTimeout);
+                state.sleepTimerTimeout = null;
+            }
+
+            if (state.sleepTimerMinutes === 0) {
+                els.sleepTimerLabel.textContent = 'Off';
+                if (els.mobileSleepTimerLabel) els.mobileSleepTimerLabel.textContent = 'Off';
+                showToast('Sleep timer turned off.');
+            } else {
+                const label = `${state.sleepTimerMinutes}m`;
+                els.sleepTimerLabel.textContent = label;
+                if (els.mobileSleepTimerLabel) els.mobileSleepTimerLabel.textContent = label;
+                showToast(`Sleep timer set for ${state.sleepTimerMinutes} minutes.`);
+                state.sleepTimerTimeout = setTimeout(() => {
+                    pauseSpeech();
+                    state.sleepTimerMinutes = 0;
+                    els.sleepTimerLabel.textContent = 'Off';
+                    if (els.mobileSleepTimerLabel) els.mobileSleepTimerLabel.textContent = 'Off';
+                    showToast('Sleep timer finished. Playback paused.');
+                }, state.sleepTimerMinutes * 60 * 1000);
+            }
+        };
+        els.sleepTimerBtn.onclick = cycleSleepTimer;
+        if (els.mobileSleepMirrorBtn) els.mobileSleepMirrorBtn.onclick = cycleSleepTimer;
+
+        // Import Modal Triggers
+        const openImport = () => els.importModal.classList.remove('hidden');
+        const closeImport = () => els.importModal.classList.add('hidden');
+
+        els.openImportModalBtn.onclick = openImport;
+        els.emptyImportBtn.onclick = openImport;
+        els.closeImportModalBtn.onclick = closeImport;
+        els.importModal.onclick = (e) => {
+            if (e.target === els.importModal) closeImport();
+        };
+
+        // File Dropzone & Input
+        els.dropZone.onclick = () => els.fileInput.click();
+        els.fileInput.onchange = (e) => {
+            if (e.target.files && e.target.files[0]) {
+                handleFileUpload(e.target.files[0]);
+            }
+        };
+
+        els.dropZone.ondragover = (e) => {
+            e.preventDefault();
+            els.dropZone.classList.add('border-indigo-500', 'bg-indigo-50/40');
+        };
+        els.dropZone.ondragleave = () => {
+            els.dropZone.classList.remove('border-indigo-500', 'bg-indigo-50/40');
+        };
+        els.dropZone.ondrop = (e) => {
+            e.preventDefault();
+            els.dropZone.classList.remove('border-indigo-500', 'bg-indigo-50/40');
+            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                handleFileUpload(e.dataTransfer.files[0]);
+            }
+        };
+
+        // Pasted Text Handler
+        els.processPastedTextBtn.onclick = () => {
+            const rawText = els.pasteContentInput.value.trim();
+            if (!rawText) {
+                showToast('Please paste some text first.', 'error');
+                return;
+            }
+            const title = els.pasteTitleInput.value.trim() || 'Pasted Reading';
+            const chapters = parseTextIntoChapters(rawText, title);
+            closeImport();
+            loadBook(title, chapters);
+        };
+
+        // Demo Sample Loaders
+        els.loadSampleEnBtn.onclick = () => {
+            const chapters = parseTextIntoChapters(SAMPLE_EN.text, SAMPLE_EN.title);
+            loadBook(SAMPLE_EN.title, chapters);
+            closeMobileSidebar();
+        };
+
+        const loadMandarinSample = () => {
+            const chapters = parseTextIntoChapters(SAMPLE_ZH.text, SAMPLE_ZH.title);
+            loadBook(SAMPLE_ZH.title, chapters);
+            closeMobileSidebar();
+        };
+        els.loadSampleZhBtn.onclick = loadMandarinSample;
+        els.emptySampleZhBtn.onclick = loadMandarinSample;
+
+        // Keyboard Shortcuts (Space = Play/Pause, Left/Right = Prev/Next Sentence)
+        document.addEventListener('keydown', (e) => {
+            if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+            if (e.code === 'Space') {
+                e.preventDefault();
+                togglePlayPause();
+            } else if (e.code === 'ArrowRight') {
+                jumpToSentence(state.currentSentenceIndex + 1, state.isPlaying);
+            } else if (e.code === 'ArrowLeft') {
+                jumpToSentence(state.currentSentenceIndex - 1, state.isPlaying);
+            }
+        });
+
+        // Initial Setup on Window Load
+        window.addEventListener('load', () => {
+            populateVoices();
+            setTimeout(populateVoices, 500);
+        });
+    </script>
+</body>
+</html>
